@@ -38,7 +38,11 @@ def sync_order_fills(session: Session, client: Trading212Client) -> int:
     while True:
         page = client.get_historical_orders(cursor=cursor)
         for item in page["items"]:
-            fill = item["fill"]
+            fill = item.get("fill")
+            if fill is None:
+                # Unfilled orders (cancelled, rejected, still pending, etc.)
+                # have no "fill" object at all - nothing to record.
+                continue
             if fill["type"] != "TRADE":
                 continue
             fill_id = str(fill["id"])

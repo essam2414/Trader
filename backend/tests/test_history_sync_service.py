@@ -59,7 +59,18 @@ ORDER_PAGE_2 = {
                     "taxes": [],
                 },
             },
-        }
+        },
+        {
+            # A cancelled/unfilled order has no "fill" object at all - real
+            # Trading212 responses include these alongside filled orders.
+            "order": {
+                "id": 4,
+                "ticker": "TSLA_US_EQ",
+                "side": "BUY",
+                "currency": "USD",
+                "status": "CANCELLED",
+            },
+        },
     ],
     "nextPagePath": None,
 }
@@ -86,13 +97,18 @@ DIVIDEND_PAGE = {
 
 
 def test_sync_order_fills_paginates_and_filters_non_trade_fills(db_session):
-    """sync_order_fills should walk every page and only store fills with type TRADE."""
+    """sync_order_fills should walk every page and only store fills with type TRADE.
+
+    fill 101 (BUY, TRADE) and fill 103 (SELL, TRADE) are stored; 102 is
+    STOCK_SPLIT (a corporate action, not a trade) and order 4 has no "fill"
+    at all (a cancelled order) - both are skipped without error.
+    """
     fake_client = MagicMock()
     fake_client.get_historical_orders.side_effect = [ORDER_PAGE_1, ORDER_PAGE_2]
 
     added = sync_order_fills(db_session, fake_client)
 
-    assert added == 2  # fill 101 (BUY, TRADE) and fill 103 (SELL, TRADE); 102 is STOCK_SPLIT
+    assert added == 2
     stored_ids = {row.id for row in db_session.query(OrderFill).all()}
     assert stored_ids == {"101", "103"}
     assert fake_client.get_historical_orders.call_count == 2
