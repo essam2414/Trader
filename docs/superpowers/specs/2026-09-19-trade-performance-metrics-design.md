@@ -80,6 +80,36 @@ Pulled from the official docs (docs.trading212.com) rather than guessed:
 actions (splits, stock dividends, spin-offs) also appear in this endpoint and must be
 filtered out before FIFO matching, or they'd corrupt quantity/cost-basis reconstruction.
 
+**`fill.price` is not reliably in one consistent currency — never trust it directly.**
+Discovered against the real account, not from docs: `fill.price` is quoted in the
+*instrument's own listing unit*, which can differ from what `walletImpact` (`netValue`,
+`realisedProfitLoss`, `taxes`) settles in:
+- GBX-quoted UK instruments (`instrument.currency == "GBX"`, e.g. LSE-listed ETCs) report
+  `price` in pence while `walletImpact.currency` is `"GBP"` — a 100x unit mismatch if
+  `price` is used directly.
+- Foreign-currency stocks (e.g. USD-listed) usually settle through that currency's own cash
+  sub-wallet (`walletImpact.currency` matches the instrument, `price` and `netValue` agree),
+  but occasionally auto-convert through the account's base-currency wallet instead when that
+  sub-wallet's balance runs dry — same instrument, same ticker, but `walletImpact.currency`
+  differs fill-to-fill with no consistent conversion applied anywhere in the API response.
+
+Fill's own `walletImpact.fxRate` field captures this (1 = no conversion, 100 = the GBX/GBP
+pence factor, or the actual historical FX rate for a cross-currency settlement), but the
+simpler and equally correct approach: `netValue` is always the true amount of
+`walletImpact.currency` that moved, so **`abs(netValue) / abs(quantity)` is the correct
+per-unit price in `walletImpact.currency`**, regardless of which of the above cases applies —
+confirmed empirically against real fills in all three cases. `services/history_sync.py`
+normalizes every fill to the account's base currency this way (converting via a historical FX
+rate — see below — when `walletImpact.currency` isn't already the base currency), so
+`match_trades` and everything downstream can keep doing plain arithmetic on `fill_price`
+without needing to know about any of this.
+
+**Historical FX conversion:** `app/fx.py` wraps the Frankfurter API
+(`api.frankfurter.dev/v1/{date}?base=X&symbols=Y` — free, no API key, ECB reference rates
+back to 1999, falls back to the nearest earlier business day for weekends/holidays) to convert
+a fill's `walletImpact` amounts to the account's base currency as of that fill's date, when
+they differ. Rates are cached per `(date, currency)` within one sync run.
+
 ## Data model
 
 Two new tables, populated only by the sync job (raw fill/dividend data — nothing
@@ -92,10 +122,10 @@ pre-aggregated or derived is stored):
 | `order_id` | String | `order.id` | |
 | `ticker` | String | `order.ticker` | |
 | `side` | String | `order.side` | `BUY` or `SELL` |
-| `quantity` | Float | `fill.quantity` | |
-| `fill_price` | Float | `fill.price` | |
-| `net_value` | Float | `fill.walletImpact.netValue` | in account currency |
-| `realised_profit_loss` | Float | `fill.walletImpact.realisedProfitLoss` | Trading212's own per-fill realized P&L (0/absent on BUY fills); used as the cross-check total, see below |
+| `quantity` | Float | `fill.quantity` | signed by Trading212 (negative for SELL); normalized to `abs()` before FIFO matching |
+| `fill_price` | Float | derived: `abs(netValue) / abs(quantity)`, FX-converted | **not** `fill.price` directly — see currency note above |
+| `net_value` | Float | `fill.walletImpact.netValue`, FX-converted to account base currency | |
+| `realised_profit_loss` | Float | `fill.walletImpact.realisedProfitLoss`, FX-converted | Trading212's own per-fill realized P&L (0/absent on BUY fills); used as the cross-check total, see below |
 | `fees` | Float | `sum(tax.quantity for tax in fill.walletImpact.taxes)` | |
 | `currency` | String(3) | `fill.walletImpact.currency` | |
 | `filled_at` | DateTime (tz-aware) | `fill.filledAt` | |
