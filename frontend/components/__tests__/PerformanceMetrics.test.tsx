@@ -32,6 +32,7 @@ const METRICS: PortfolioMetrics = {
   maxDrawdown: 0.25,
   dividendIncome: 10,
   dividendIncomeByTicker: {},
+  trades: [],
 };
 
 describe("PerformanceMetrics", () => {

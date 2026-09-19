@@ -1,6 +1,6 @@
 // Main dashboard Server Component: fetches live portfolio data from the backend API
 // server-side (so BACKEND_URL/DASHBOARD_API_KEY never reach the browser) and renders
-// the summary, equity curve, positions table, and performance metrics.
+// the summary, equity curve, positions table, performance metrics, and trade history.
 export const dynamic = "force-dynamic";
 
 import { EquityCurveChart } from "../components/EquityCurveChart";
@@ -8,6 +8,7 @@ import { PerformanceMetrics } from "../components/PerformanceMetrics";
 import { PortfolioSummary } from "../components/PortfolioSummary";
 import { PositionsTable } from "../components/PositionsTable";
 import { TickerPerformanceTable } from "../components/TickerPerformanceTable";
+import { TradeHistoryTable } from "../components/TradeHistoryTable";
 import { getPortfolioCurrent, getPortfolioHistory, getPortfolioMetrics } from "../lib/api";
 
 export default async function DashboardPage() {
@@ -41,6 +42,10 @@ export default async function DashboardPage() {
             currency={current.account.currency}
           />
         </div>
+      </section>
+      <section>
+        <h2 className="mb-4 text-xl font-semibold">Trade history</h2>
+        <TradeHistoryTable trades={metrics.trades} currency={current.account.currency} />
       </section>
     </main>
   );

@@ -45,6 +45,17 @@ export interface TickerPerformance {
   winRate: number;
 }
 
+export interface Trade {
+  ticker: string;
+  quantity: number;
+  entryPrice: number;
+  entryAt: string;
+  exitPrice: number;
+  exitAt: string;
+  pnl: number;
+  holdingPeriodHours: number;
+}
+
 export interface PortfolioMetrics {
   realizedPnl: number;
   trading212RealizedPnl: number;
@@ -69,4 +80,5 @@ export interface PortfolioMetrics {
   maxDrawdown: number;
   dividendIncome: number;
   dividendIncomeByTicker: Record<string, number>;
+  trades: Trade[];
 }
