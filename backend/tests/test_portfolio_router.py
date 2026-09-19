@@ -141,6 +141,14 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
     assert body["realizedPnl"] == pytest.approx(100.0)
     assert body["winRate"] == pytest.approx(1.0)
     assert "cashDrag" not in body
+    assert len(body["trades"]) == 1
+    trade = body["trades"][0]
+    assert trade["ticker"] == "AAPL_US_EQ"
+    assert trade["quantity"] == 10.0
+    assert trade["entryPrice"] == 100.0
+    assert trade["exitPrice"] == 110.0
+    assert trade["pnl"] == pytest.approx(100.0)
+    assert trade["holdingPeriodHours"] == pytest.approx(96.0)
 
 
 def test_get_portfolio_metrics_requires_auth(client):

@@ -56,6 +56,17 @@ class TickerPerformanceOut(BaseModel):
     winRate: float
 
 
+class TradeOut(BaseModel):
+    ticker: str
+    quantity: float
+    entryPrice: float
+    entryAt: datetime
+    exitPrice: float
+    exitAt: datetime
+    pnl: float
+    holdingPeriodHours: float
+
+
 class PortfolioMetricsOut(BaseModel):
     realizedPnl: float
     trading212RealizedPnl: float
@@ -80,3 +91,4 @@ class PortfolioMetricsOut(BaseModel):
     maxDrawdown: float
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]
+    trades: list[TradeOut]

@@ -142,6 +142,7 @@ class PortfolioMetrics:
     max_drawdown: float
     dividend_income: float
     dividend_income_by_ticker: dict[str, float]
+    closed_trades: list[ClosedTrade]
 
 
 _DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -222,6 +223,7 @@ def compute_portfolio_metrics(
         max_drawdown=compute_max_drawdown(snapshots),
         dividend_income=dividend_income,
         dividend_income_by_ticker=dict(dividend_income_by_ticker),
+        closed_trades=sorted(trades, key=lambda t: t.exit_at, reverse=True),
     )
 
 

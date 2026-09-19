@@ -260,6 +260,14 @@ def test_compute_portfolio_metrics_aggregates_trades_dividends_and_drawdown():
     assert metrics.dividend_income == pytest.approx(10.0)
     assert metrics.dividend_income_by_ticker == {"AAPL_US_EQ": 8.0, "MSFT_US_EQ": 2.0}
 
+    # closed_trades is sorted newest-first (by exit_at descending), unlike
+    # match_trades' own oldest-first return order.
+    assert [t.ticker for t in metrics.closed_trades] == ["AAPL_US_EQ", "MSFT_US_EQ", "AAPL_US_EQ"]
+    assert metrics.closed_trades[0].pnl == pytest.approx(-51.0)
+    assert metrics.closed_trades[0].quantity == 5.0
+    assert metrics.closed_trades[0].entry_price == 50.0
+    assert metrics.closed_trades[0].exit_price == 40.0
+
     by_ticker = {tp.ticker: tp for tp in metrics.performance_by_ticker}
     assert by_ticker["AAPL_US_EQ"].realized_pnl == pytest.approx(47.0)  # 98 - 51
     assert by_ticker["AAPL_US_EQ"].trade_count == 2
@@ -286,6 +294,7 @@ def test_compute_portfolio_metrics_handles_no_closed_trades():
     assert metrics.average_holding_period_hours == 0.0
     assert metrics.performance_by_ticker == []
     assert metrics.dividend_income == 0.0
+    assert metrics.closed_trades == []
 
 
 def test_count_by_day_of_week_buckets_matching_weekdays_together():

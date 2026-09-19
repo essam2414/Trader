@@ -20,6 +20,7 @@ from ..schemas import (
     PortfolioSnapshotOut,
     Position,
     TickerPerformanceOut,
+    TradeOut,
 )
 from ..services.metrics import compute_portfolio_metrics
 from ..trading212 import Trading212Client
@@ -126,4 +127,17 @@ def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
         maxDrawdown=metrics.max_drawdown,
         dividendIncome=metrics.dividend_income,
         dividendIncomeByTicker=metrics.dividend_income_by_ticker,
+        trades=[
+            TradeOut(
+                ticker=t.ticker,
+                quantity=t.quantity,
+                entryPrice=t.entry_price,
+                entryAt=t.entry_at,
+                exitPrice=t.exit_price,
+                exitAt=t.exit_at,
+                pnl=t.pnl,
+                holdingPeriodHours=t.holding_period.total_seconds() / 3600,
+            )
+            for t in metrics.closed_trades
+        ],
     )
