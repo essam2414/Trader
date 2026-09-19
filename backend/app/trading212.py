@@ -59,3 +59,51 @@ class Trading212Client:
         response = self._client.get("/equity/positions")
         response.raise_for_status()
         return response.json()
+
+    def get_historical_orders(self, cursor: int | None = None, ticker: str | None = None) -> dict:
+        """Retrieve one page of historical order/fill data.
+
+        Args:
+            cursor: Pagination cursor from a previous page's nextPagePath, or
+                None to fetch the first page.
+            ticker: Optional ticker to filter results to a single instrument.
+
+        Returns:
+            Dict with "items" (list of order/fill records) and "nextPagePath"
+            (str or None) for the next page.
+
+        Raises:
+            httpx.HTTPStatusError: If the API returns a non-2xx status code.
+        """
+        params: dict[str, str | int] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if ticker is not None:
+            params["ticker"] = ticker
+        response = self._client.get("/equity/history/orders", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def get_dividends(self, cursor: int | None = None, ticker: str | None = None) -> dict:
+        """Retrieve one page of historical dividend payment data.
+
+        Args:
+            cursor: Pagination cursor from a previous page's nextPagePath, or
+                None to fetch the first page.
+            ticker: Optional ticker to filter results to a single instrument.
+
+        Returns:
+            Dict with "items" (list of dividend records) and "nextPagePath"
+            (str or None) for the next page.
+
+        Raises:
+            httpx.HTTPStatusError: If the API returns a non-2xx status code.
+        """
+        params: dict[str, str | int] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if ticker is not None:
+            params["ticker"] = ticker
+        response = self._client.get("/equity/history/dividends", params=params)
+        response.raise_for_status()
+        return response.json()

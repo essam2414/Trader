@@ -81,6 +81,73 @@ def test_get_positions_returns_list_of_positions():
 
 
 @respx.mock
+def test_get_historical_orders_returns_items_and_next_page_path():
+    """get_historical_orders should return the parsed page (items + nextPagePath)."""
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"order": {"id": 1, "ticker": "AAPL_US_EQ"}, "fill": {"id": 101}}],
+                "nextPagePath": "/api/v0/equity/history/orders?cursor=2&limit=50",
+            },
+        )
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    page = client.get_historical_orders()
+
+    assert page["items"][0]["fill"]["id"] == 101
+    assert page["nextPagePath"] == "/api/v0/equity/history/orders?cursor=2&limit=50"
+
+
+@respx.mock
+def test_get_historical_orders_sends_cursor_as_query_param():
+    """When given a cursor, get_historical_orders should send it as a query param."""
+    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2"}).mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    client.get_historical_orders(cursor=2)
+
+    assert route.called
+
+
+@respx.mock
+def test_get_historical_orders_omits_cursor_param_on_first_page():
+    """With no cursor given, the request should not include a cursor query param at all."""
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    client.get_historical_orders()
+
+    request = respx.calls[-1].request
+    assert "cursor" not in request.url.params
+
+
+@respx.mock
+def test_get_dividends_returns_items_and_next_page_path():
+    """get_dividends should return the parsed page (items + nextPagePath)."""
+    respx.get(f"{BASE_URL}/equity/history/dividends").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"ticker": "AAPL_US_EQ", "amount": 5.0}],
+                "nextPagePath": None,
+            },
+        )
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    page = client.get_dividends()
+
+    assert page["items"][0]["ticker"] == "AAPL_US_EQ"
+    assert page["nextPagePath"] is None
+
+
+@respx.mock
 def test_raises_for_non_200_response():
     """The client should raise HTTPStatusError when Trading212 responds with a non-200 status."""
     respx.get(f"{BASE_URL}/equity/account/summary").mock(return_value=httpx.Response(401))
