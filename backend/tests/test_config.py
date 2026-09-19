@@ -20,6 +20,10 @@ def test_settings_loads_from_environment_with_defaults(monkeypatch):
     monkeypatch.setenv("TRADING212_API_KEY", "key")
     monkeypatch.setenv("TRADING212_API_SECRET", "secret")
     monkeypatch.setenv("DASHBOARD_API_KEY", "dashboard-secret")
+    # conftest.py sets a real DATABASE_URL env var (not via monkeypatch) for the
+    # whole test session so app modules import cleanly; remove it here so this
+    # test can verify the actual default value.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
 
     settings = Settings(_env_file=None)
 
