@@ -26,8 +26,11 @@ class AccountSummary(BaseModel):
 
 
 class Position(BaseModel):
+    # `currency` is the instrument's own trading currency (may differ from the
+    # account's base currency); price fields below are quoted in it.
     ticker: str
     name: str
+    currency: str
     quantity: float
     averagePricePaid: float
     currentPrice: float

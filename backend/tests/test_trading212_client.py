@@ -1,3 +1,4 @@
+"""Tests for the Trading212Client HTTP wrapper (auth headers, JSON parsing, error handling)."""
 import base64
 
 import httpx
@@ -11,6 +12,7 @@ BASE_URL = "https://live.trading212.com/api/v0"
 
 @respx.mock
 def test_get_account_summary_sends_basic_auth_and_returns_json():
+    """get_account_summary should send HTTP Basic auth and return the parsed JSON body."""
     route = respx.get(f"{BASE_URL}/equity/account/summary").mock(
         return_value=httpx.Response(
             200,
@@ -40,6 +42,7 @@ def test_get_account_summary_sends_basic_auth_and_returns_json():
 
 @respx.mock
 def test_get_positions_returns_list_of_positions():
+    """get_positions should return the parsed list of open position objects."""
     respx.get(f"{BASE_URL}/equity/positions").mock(
         return_value=httpx.Response(
             200,
@@ -78,6 +81,7 @@ def test_get_positions_returns_list_of_positions():
 
 @respx.mock
 def test_raises_for_non_200_response():
+    """The client should raise HTTPStatusError when Trading212 responds with a non-200 status."""
     respx.get(f"{BASE_URL}/equity/account/summary").mock(return_value=httpx.Response(401))
     client = Trading212Client(api_key="bad", api_secret="bad", base_url=BASE_URL)
 

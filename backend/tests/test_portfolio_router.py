@@ -1,3 +1,4 @@
+"""Tests for the /api/portfolio routes (current portfolio and history)."""
 from unittest.mock import MagicMock
 
 from app.dependencies import get_trading212_client
@@ -35,6 +36,7 @@ AUTH_HEADER = {"Authorization": "Bearer test-dashboard-key"}
 
 
 def test_get_current_portfolio_returns_account_and_positions(client):
+    """The endpoint should return the account summary and positions from the Trading212 client, including each position's instrument currency."""
     fake_client = MagicMock()
     fake_client.get_account_summary.return_value = FAKE_SUMMARY
     fake_client.get_positions.return_value = FAKE_POSITIONS
@@ -47,16 +49,19 @@ def test_get_current_portfolio_returns_account_and_positions(client):
     body = response.json()
     assert body["account"]["totalValue"] == 10250.50
     assert body["positions"][0]["ticker"] == "NVDA_US_EQ"
+    assert body["positions"][0]["currency"] == "USD"
     assert body["positions"][0]["unrealizedProfitLoss"] == 147.0
 
 
 def test_get_current_portfolio_requires_auth(client):
+    """The endpoint should reject requests without a valid bearer token."""
     response = client.get("/api/portfolio/current")
 
     assert response.status_code == 401
 
 
 def test_get_portfolio_history_returns_stored_snapshots(client, db_session):
+    """The endpoint should return previously stored portfolio snapshots."""
     db_session.add(PortfolioSnapshot(total_value=100.0, unrealized_profit_loss=5.0, currency="USD"))
     db_session.commit()
 

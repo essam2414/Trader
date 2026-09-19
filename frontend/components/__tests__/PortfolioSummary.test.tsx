@@ -1,3 +1,5 @@
+// Tests for PortfolioSummary: verifies it renders the account's total value, cash, and P/L figures.
+
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { formatCurrency } from "../../lib/format";

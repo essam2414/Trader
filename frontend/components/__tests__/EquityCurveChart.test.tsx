@@ -1,3 +1,5 @@
+// Tests for EquityCurveChart: verifies the empty state and that a chart renders given snapshot data.
+
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { EquityCurveChart } from "../EquityCurveChart";

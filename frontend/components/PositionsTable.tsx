@@ -25,8 +25,8 @@ export function PositionsTable({ positions, currency }: { positions: Position[];
           <tr key={position.ticker} className="border-b border-neutral-100">
             <td className="py-2 font-medium">{position.ticker}</td>
             <td className="py-2">{position.quantity}</td>
-            <td className="py-2">{formatCurrency(position.averagePricePaid, currency)}</td>
-            <td className="py-2">{formatCurrency(position.currentPrice, currency)}</td>
+            <td className="py-2">{formatCurrency(position.averagePricePaid, position.currency)}</td>
+            <td className="py-2">{formatCurrency(position.currentPrice, position.currency)}</td>
             <td className="py-2">{formatCurrency(position.currentValue, currency)}</td>
             <td className={`py-2 ${position.unrealizedProfitLoss >= 0 ? "text-green-600" : "text-red-600"}`}>
               {formatCurrency(position.unrealizedProfitLoss, currency)}

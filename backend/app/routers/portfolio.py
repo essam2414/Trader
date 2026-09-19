@@ -35,6 +35,7 @@ def get_current_portfolio(client: Trading212Client = Depends(get_trading212_clie
             Position(
                 ticker=p["instrument"]["ticker"],
                 name=p["instrument"]["name"],
+                currency=p["instrument"]["currency"],
                 quantity=p["quantity"],
                 averagePricePaid=p["averagePricePaid"],
                 currentPrice=p["currentPrice"],

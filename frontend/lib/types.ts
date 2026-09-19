@@ -19,6 +19,7 @@ export interface AccountSummary {
 export interface Position {
   ticker: string;
   name: string;
+  currency: string;
   quantity: number;
   averagePricePaid: number;
   currentPrice: number;

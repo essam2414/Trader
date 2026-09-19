@@ -1,3 +1,5 @@
+// Tests for the backend API client: verifies request URLs, auth headers, and error handling.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPortfolioCurrent, getPortfolioHistory } from "../api";
 
