@@ -16,15 +16,21 @@ Backend (run from `backend/`, with the virtualenv at `backend/.venv/` activated)
 - Install deps: `pip install -r requirements-dev.txt`
 - Run all tests: `python -m pytest -v`
 - Run a single test: `python -m pytest tests/test_portfolio_router.py::test_get_current_portfolio_returns_account_and_positions -v`
+- Lint: `ruff check .`
+- Format check: `ruff format --check .` (auto-fix with `ruff format .`)
 - Run dev server: `uvicorn app.main:app --reload`
 - Copy `.env.example` to `.env` and fill in real Trading212 API credentials and a random `DASHBOARD_API_KEY` before running.
 
 Frontend (run from `frontend/`):
 - Install deps: `npm install`
 - Run tests: `npm run test`
+- Lint: `npm run lint`
 - Run dev server: `npm run dev`
 - Build: `npm run build`
 - Copy `.env.local.example` to `.env.local`; `DASHBOARD_API_KEY` must match the backend's.
+
+CI (`.github/workflows/ci.yml`) runs lint, format check (backend only), tests, and the
+frontend build on every push and on PRs into `main`.
 
 ## What this project is
 

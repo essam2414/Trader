@@ -1,4 +1,5 @@
 """Tests for the PortfolioSnapshot ORM model."""
+
 from app.models import PortfolioSnapshot
 
 

@@ -1,4 +1,5 @@
 """Tests for the Trading212Client HTTP wrapper (auth headers, JSON parsing, error handling)."""
+
 import base64
 
 import httpx

@@ -1,4 +1,5 @@
 """SQLAlchemy ORM models for the Trading212 portfolio dashboard backend."""
+
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Float, String

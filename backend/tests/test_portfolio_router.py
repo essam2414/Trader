@@ -1,4 +1,5 @@
 """Tests for the /api/portfolio routes (current portfolio and history)."""
+
 from unittest.mock import MagicMock
 
 import httpx
@@ -38,7 +39,7 @@ AUTH_HEADER = {"Authorization": "Bearer test-dashboard-key"}
 
 
 def test_get_current_portfolio_returns_account_and_positions(client):
-    """The endpoint should return the account summary and positions from the Trading212 client, including each position's instrument currency."""
+    """Returns the account summary and positions, including each position's currency."""
     fake_client = MagicMock()
     fake_client.get_account_summary.return_value = FAKE_SUMMARY
     fake_client.get_positions.return_value = FAKE_POSITIONS
