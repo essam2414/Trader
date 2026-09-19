@@ -22,7 +22,7 @@ export default async function DashboardPage() {
     : 0;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-6 sm:p-10">
+    <main className="mx-auto w-full max-w-[1360px] space-y-6 p-8 xl:p-10">
       <header className="flex items-baseline gap-3">
         <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Portfolio dashboard</h1>
