@@ -1,6 +1,8 @@
 """Tests for the /api/portfolio routes (current portfolio and history)."""
 from unittest.mock import MagicMock
 
+import httpx
+
 from app.dependencies import get_trading212_client
 from app.main import app
 from app.models import PortfolioSnapshot
@@ -51,6 +53,24 @@ def test_get_current_portfolio_returns_account_and_positions(client):
     assert body["positions"][0]["ticker"] == "NVDA_US_EQ"
     assert body["positions"][0]["currency"] == "USD"
     assert body["positions"][0]["unrealizedProfitLoss"] == 147.0
+
+
+def test_get_current_portfolio_returns_502_when_trading212_unreachable(client):
+    """If the Trading212 client fails (bad credentials, network error), the endpoint
+    should translate that into a 502 with a clear message, not leak a raw 500."""
+    fake_client = MagicMock()
+    fake_client.get_account_summary.side_effect = httpx.HTTPStatusError(
+        "401 Unauthorized",
+        request=httpx.Request("GET", "https://live.trading212.com/api/v0/equity/account/summary"),
+        response=httpx.Response(401),
+    )
+    app.dependency_overrides[get_trading212_client] = lambda: fake_client
+
+    response = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+
+    del app.dependency_overrides[get_trading212_client]
+    assert response.status_code == 502
+    assert "Trading212" in response.json()["detail"]
 
 
 def test_get_current_portfolio_requires_auth(client):

@@ -5,7 +5,8 @@ live from Trading212) and the historical equity-curve data (stored
 PortfolioSnapshot rows). All routes require the shared dashboard API key.
 """
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..auth import require_api_key
@@ -19,9 +20,19 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 
 @router.get("/portfolio/current", response_model=PortfolioCurrent)
 def get_current_portfolio(client: Trading212Client = Depends(get_trading212_client)) -> PortfolioCurrent:
-    """Fetch the live account summary and open positions from Trading212."""
-    summary = client.get_account_summary()
-    positions = client.get_positions()
+    """Fetch the live account summary and open positions from Trading212.
+
+    Translates any Trading212 connection/auth failure into a 502 so the frontend
+    can show a clear "Trading212 isn't connected" message instead of an opaque 500.
+    """
+    try:
+        summary = client.get_account_summary()
+        positions = client.get_positions()
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to Trading212 - check your API credentials.",
+        ) from exc
     return PortfolioCurrent(
         account=AccountSummary(
             id=summary["id"],
