@@ -29,7 +29,11 @@ def run_snapshot_job() -> None:
 
 
 def run_history_sync_job() -> None:
-    """Sync Trading212 order/dividend history; invoked on a timer by the scheduler."""
+    """Sync Trading212 order/dividend history; invoked on a timer by the scheduler.
+
+    Fetches the account summary first to get the account's base currency, so
+    fills that settled in a different currency get normalized to it.
+    """
     client = Trading212Client(
         api_key=settings.trading212_api_key,
         api_secret=settings.trading212_api_secret,
@@ -38,6 +42,7 @@ def run_history_sync_job() -> None:
     )
     session = SessionLocal()
     try:
-        sync_history(session, client)
+        account_currency = client.get_account_summary()["currency"]
+        sync_history(session, client, target_currency=account_currency)
     finally:
         session.close()
