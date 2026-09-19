@@ -1,7 +1,7 @@
 // Tests for the backend API client: verifies request URLs, auth headers, and error handling.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getPortfolioCurrent, getPortfolioHistory } from "../api";
+import { getPortfolioCurrent, getPortfolioHistory, getPortfolioMetrics } from "../api";
 
 describe("portfolio API client", () => {
   beforeEach(() => {
@@ -61,5 +61,26 @@ describe("portfolio API client", () => {
       "https://backend.example.com/api/portfolio/history",
       expect.objectContaining({ headers: { Authorization: "Bearer test-key" } })
     );
+  });
+
+  it("fetches portfolio metrics from the backend", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getPortfolioMetrics();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://backend.example.com/api/portfolio/metrics",
+      expect.objectContaining({ headers: { Authorization: "Bearer test-key" } })
+    );
+  });
+
+  it("throws when the metrics endpoint responds with an error status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
+    );
+
+    await expect(getPortfolioMetrics()).rejects.toThrow("Failed to fetch portfolio metrics: 500");
   });
 });
