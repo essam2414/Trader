@@ -44,9 +44,9 @@ export function Sidebar() {
 
   return (
     <aside className="sticky top-0 flex h-screen flex-col border-r border-zinc-800 bg-zinc-950 px-4 py-6">
-      <Link href="/" className="mb-10 flex items-center gap-3 px-3" aria-label="Trader dashboard">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-amber-500 font-mono text-sm font-bold text-zinc-950">T</span>
-        <span className="text-lg font-semibold tracking-tight text-zinc-100">Trader</span>
+      <Link href="/" className="mb-10 flex items-center gap-3 px-3" aria-label="Invest dashboard">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-amber-500 font-mono text-sm font-bold text-zinc-950">I</span>
+        <span className="text-lg font-semibold tracking-tight text-zinc-100">Invest</span>
       </Link>
 
       <nav aria-label="Main navigation">
@@ -72,8 +72,6 @@ export function Sidebar() {
           })}
         </ul>
       </nav>
-
-      <p className="mt-auto px-3 font-mono text-[11px] uppercase tracking-wider text-zinc-600">Decision support</p>
     </aside>
   );
 }
