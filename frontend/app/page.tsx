@@ -16,6 +16,9 @@ export default async function DashboardPage() {
     getPortfolioHistory(),
     getPortfolioMetrics(),
   ]);
+  const cashDrag = current.account.totalValue
+    ? current.account.cash.availableToTrade / current.account.totalValue
+    : 0;
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 p-8">
@@ -31,7 +34,7 @@ export default async function DashboardPage() {
       </section>
       <section>
         <h2 className="mb-4 text-xl font-semibold">Performance</h2>
-        <PerformanceMetrics metrics={metrics} currency={current.account.currency} />
+        <PerformanceMetrics metrics={metrics} cashDrag={cashDrag} currency={current.account.currency} />
         <div className="mt-6">
           <TickerPerformanceTable
             performanceByTicker={metrics.performanceByTicker}

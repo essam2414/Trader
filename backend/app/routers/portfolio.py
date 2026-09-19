@@ -82,26 +82,17 @@ def get_portfolio_history(db: Session = Depends(get_db)) -> list[PortfolioSnapsh
 
 
 @router.get("/portfolio/metrics", response_model=PortfolioMetricsOut)
-def get_portfolio_metrics(
-    db: Session = Depends(get_db),
-    client: Trading212Client = Depends(get_trading212_client),
-) -> PortfolioMetricsOut:
-    """Compute trade performance metrics from synced Trading212 history, plus
-    a live cash-drag figure from the current account summary."""
+def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
+    """Compute trade performance metrics purely from synced Trading212 history
+    stored in the DB. Deliberately makes no live Trading212 call: cash drag
+    needs only totalValue/cash.availableToTrade, both of which the frontend
+    already has from /portfolio/current, which it fetches in the same
+    dashboard load - an independent call here would just race that one for
+    Trading212's request budget for no benefit."""
     fills = db.query(OrderFill).order_by(OrderFill.filled_at).all()
     dividends = db.query(Dividend).all()
     snapshots = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.taken_at).all()
     metrics = compute_portfolio_metrics(fills, dividends, snapshots)
-
-    try:
-        summary = client.get_account_summary()
-    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not connect to Trading212 - check your API credentials.",
-        ) from exc
-    total_value = summary["totalValue"]
-    cash_drag = summary["cash"]["availableToTrade"] / total_value if total_value else 0.0
 
     return PortfolioMetricsOut(
         realizedPnl=metrics.realized_pnl,
@@ -133,7 +124,6 @@ def get_portfolio_metrics(
         entriesByHourOfDay=metrics.entries_by_hour_of_day,
         exitsByHourOfDay=metrics.exits_by_hour_of_day,
         maxDrawdown=metrics.max_drawdown,
-        cashDrag=cash_drag,
         dividendIncome=metrics.dividend_income,
         dividendIncomeByTicker=metrics.dividend_income_by_ticker,
     )

@@ -78,9 +78,5 @@ class PortfolioMetricsOut(BaseModel):
     entriesByHourOfDay: dict[str, int]
     exitsByHourOfDay: dict[str, int]
     maxDrawdown: float
-    # Not part of the metrics service's PortfolioMetrics — computed by the
-    # router from a live account-summary call, since services/metrics.py is
-    # pure/no-IO and cash drag isn't a historical figure.
-    cashDrag: float
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]

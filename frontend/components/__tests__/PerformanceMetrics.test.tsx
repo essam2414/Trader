@@ -30,14 +30,13 @@ const METRICS: PortfolioMetrics = {
   entriesByHourOfDay: {},
   exitsByHourOfDay: {},
   maxDrawdown: 0.25,
-  cashDrag: 0.1,
   dividendIncome: 10,
   dividendIncomeByTicker: {},
 };
 
 describe("PerformanceMetrics", () => {
   it("renders realized P/L, win rate, expectancy, drawdown, and cash drag", () => {
-    render(<PerformanceMetrics metrics={METRICS} currency="USD" />);
+    render(<PerformanceMetrics metrics={METRICS} cashDrag={0.1} currency="USD" />);
 
     expect(screen.getByText(formatCurrency(57, "USD"))).toBeInTheDocument();
     expect(screen.getByText("66.7%")).toBeInTheDocument();
@@ -50,6 +49,7 @@ describe("PerformanceMetrics", () => {
     render(
       <PerformanceMetrics
         metrics={{ ...METRICS, closedTradeCount: 0, winRate: 0, profitFactor: null, payoffRatio: null }}
+        cashDrag={0.1}
         currency="USD"
       />
     );

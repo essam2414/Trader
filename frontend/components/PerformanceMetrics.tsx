@@ -4,6 +4,11 @@
 // 0 (or a dash for ratios undefined with no losing trades) when there are no
 // closed trades yet, so the grid always renders rather than needing an
 // empty-state gate.
+//
+// cashDrag is a separate prop, not part of `metrics`: it's derived from the
+// account summary the page already fetches for the portfolio summary
+// section, rather than /api/portfolio/metrics making its own redundant
+// Trading212 call just to compute the same ratio.
 
 import { formatCurrency } from "../lib/format";
 import type { PortfolioMetrics } from "../lib/types";
@@ -16,7 +21,15 @@ function formatRatio(value: number | null): string {
   return value === null ? "—" : value.toFixed(2);
 }
 
-export function PerformanceMetrics({ metrics, currency }: { metrics: PortfolioMetrics; currency: string }) {
+export function PerformanceMetrics({
+  metrics,
+  cashDrag,
+  currency,
+}: {
+  metrics: PortfolioMetrics;
+  cashDrag: number;
+  currency: string;
+}) {
   const isProfit = metrics.realizedPnl >= 0;
   return (
     <div className="grid grid-cols-2 gap-4 rounded-lg border border-neutral-200 p-6 sm:grid-cols-4">
@@ -52,7 +65,7 @@ export function PerformanceMetrics({ metrics, currency }: { metrics: PortfolioMe
       </div>
       <div>
         <p className="text-sm text-neutral-500">Cash drag</p>
-        <p className="text-2xl font-semibold">{formatPercent(metrics.cashDrag)}</p>
+        <p className="text-2xl font-semibold">{formatPercent(cashDrag)}</p>
       </div>
       <div>
         <p className="text-sm text-neutral-500">Dividend income</p>

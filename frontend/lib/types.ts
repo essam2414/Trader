@@ -67,7 +67,6 @@ export interface PortfolioMetrics {
   entriesByHourOfDay: Record<string, number>;
   exitsByHourOfDay: Record<string, number>;
   maxDrawdown: number;
-  cashDrag: number;
   dividendIncome: number;
   dividendIncomeByTicker: Record<string, number>;
 }

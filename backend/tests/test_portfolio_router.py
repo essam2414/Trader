@@ -96,9 +96,11 @@ def test_get_portfolio_history_returns_stored_snapshots(client, db_session):
     assert body[0]["totalValue"] == 100.0
 
 
-def test_get_portfolio_metrics_returns_computed_metrics_and_cash_drag(client, db_session):
-    """The endpoint should compute metrics from synced history and cash drag
-    from a live account-summary call."""
+def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(client, db_session):
+    """The endpoint should compute metrics purely from synced DB history - no
+    Trading212 call needed, so it can't fail or contend with /portfolio/current
+    for Trading212's request budget when both are fetched concurrently on
+    every dashboard load."""
     db_session.add_all(
         [
             OrderFill(
@@ -130,23 +132,15 @@ def test_get_portfolio_metrics_returns_computed_metrics_and_cash_drag(client, db
         ]
     )
     db_session.commit()
-    fake_client = MagicMock()
-    fake_client.get_account_summary.return_value = {
-        **FAKE_SUMMARY,
-        "totalValue": 1000.0,
-        "cash": {"availableToTrade": 250.0, "inPies": 0.0, "reservedForOrders": 0.0},
-    }
-    app.dependency_overrides[get_trading212_client] = lambda: fake_client
 
     response = client.get("/api/portfolio/metrics", headers=AUTH_HEADER)
 
-    del app.dependency_overrides[get_trading212_client]
     assert response.status_code == 200
     body = response.json()
     assert body["closedTradeCount"] == 1
     assert body["realizedPnl"] == pytest.approx(100.0)
     assert body["winRate"] == pytest.approx(1.0)
-    assert body["cashDrag"] == pytest.approx(0.25)
+    assert "cashDrag" not in body
 
 
 def test_get_portfolio_metrics_requires_auth(client):
