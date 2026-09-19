@@ -79,9 +79,7 @@ def sync_dividends(session: Session, client: Trading212Client) -> int:
     while True:
         page = client.get_dividends(cursor=cursor)
         for item in page["items"]:
-            dividend_id = item.get("reference") or (
-                f"{item['ticker']}:{item['paidOn']}:{item['amount']}"
-            )
+            dividend_id = item.get("reference") or (f"{item['ticker']}:{item['paidOn']}:{item['amount']}")
             if dividend_id in existing_ids:
                 continue
             session.add(

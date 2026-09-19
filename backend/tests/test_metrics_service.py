@@ -78,20 +78,28 @@ def test_match_trades_keeps_tickers_independent():
 def test_compute_max_drawdown_finds_largest_peak_to_trough_decline():
     snapshots = [
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc), total_value=1000.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            total_value=1000.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 2, tzinfo=timezone.utc), total_value=1200.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            total_value=1200.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 3, tzinfo=timezone.utc), total_value=900.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            total_value=900.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 4, tzinfo=timezone.utc), total_value=1100.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 4, tzinfo=timezone.utc),
+            total_value=1100.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
     ]
 
@@ -104,8 +112,10 @@ def test_compute_max_drawdown_is_zero_with_fewer_than_two_snapshots():
         compute_max_drawdown(
             [
                 PortfolioSnapshot(
-                    taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc), total_value=1000.0,
-                    unrealized_profit_loss=0.0, currency="USD",
+                    taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    total_value=1000.0,
+                    unrealized_profit_loss=0.0,
+                    currency="USD",
                 )
             ]
         )
@@ -119,62 +129,113 @@ def test_compute_portfolio_metrics_aggregates_trades_dividends_and_drawdown():
         # deliberately, so this fixture doubles as a check that the two P&L
         # figures line up when there's no scaling in/out to cause divergence.
         _fill(
-            "1", "AAPL_US_EQ", "BUY", 10.0, 100.0,
-            datetime(2026, 1, 1, 10, tzinfo=timezone.utc), fees=1.0,
+            "1",
+            "AAPL_US_EQ",
+            "BUY",
+            10.0,
+            100.0,
+            datetime(2026, 1, 1, 10, tzinfo=timezone.utc),
+            fees=1.0,
         ),
         _fill(
-            "2", "AAPL_US_EQ", "SELL", 10.0, 110.0,
-            datetime(2026, 1, 5, 10, tzinfo=timezone.utc), fees=1.0, realised_profit_loss=98.0,
+            "2",
+            "AAPL_US_EQ",
+            "SELL",
+            10.0,
+            110.0,
+            datetime(2026, 1, 5, 10, tzinfo=timezone.utc),
+            fees=1.0,
+            realised_profit_loss=98.0,
         ),
         # MSFT: win
         _fill(
-            "3", "MSFT_US_EQ", "BUY", 2.0, 200.0,
+            "3",
+            "MSFT_US_EQ",
+            "BUY",
+            2.0,
+            200.0,
             datetime(2026, 1, 10, 12, tzinfo=timezone.utc),
         ),
         _fill(
-            "4", "MSFT_US_EQ", "SELL", 2.0, 205.0,
-            datetime(2026, 1, 11, 12, tzinfo=timezone.utc), realised_profit_loss=10.0,
+            "4",
+            "MSFT_US_EQ",
+            "SELL",
+            2.0,
+            205.0,
+            datetime(2026, 1, 11, 12, tzinfo=timezone.utc),
+            realised_profit_loss=10.0,
         ),
         # AAPL: loss
         _fill(
-            "5", "AAPL_US_EQ", "BUY", 5.0, 50.0,
-            datetime(2026, 2, 1, 9, tzinfo=timezone.utc), fees=0.5,
+            "5",
+            "AAPL_US_EQ",
+            "BUY",
+            5.0,
+            50.0,
+            datetime(2026, 2, 1, 9, tzinfo=timezone.utc),
+            fees=0.5,
         ),
         _fill(
-            "6", "AAPL_US_EQ", "SELL", 5.0, 40.0,
-            datetime(2026, 2, 3, 9, tzinfo=timezone.utc), fees=0.5, realised_profit_loss=-51.0,
+            "6",
+            "AAPL_US_EQ",
+            "SELL",
+            5.0,
+            40.0,
+            datetime(2026, 2, 3, 9, tzinfo=timezone.utc),
+            fees=0.5,
+            realised_profit_loss=-51.0,
         ),
     ]
     dividends = [
         Dividend(
-            id="d1", ticker="AAPL_US_EQ", amount=5.0, currency="USD", type="ORDINARY",
+            id="d1",
+            ticker="AAPL_US_EQ",
+            amount=5.0,
+            currency="USD",
+            type="ORDINARY",
             paid_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
         ),
         Dividend(
-            id="d2", ticker="AAPL_US_EQ", amount=3.0, currency="USD", type="ORDINARY",
+            id="d2",
+            ticker="AAPL_US_EQ",
+            amount=3.0,
+            currency="USD",
+            type="ORDINARY",
             paid_at=datetime(2026, 1, 25, tzinfo=timezone.utc),
         ),
         Dividend(
-            id="d3", ticker="MSFT_US_EQ", amount=2.0, currency="USD", type="ORDINARY",
+            id="d3",
+            ticker="MSFT_US_EQ",
+            amount=2.0,
+            currency="USD",
+            type="ORDINARY",
             paid_at=datetime(2026, 1, 25, tzinfo=timezone.utc),
         ),
     ]
     snapshots = [
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc), total_value=1000.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            total_value=1000.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 2, tzinfo=timezone.utc), total_value=1200.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            total_value=1200.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 3, tzinfo=timezone.utc), total_value=900.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            total_value=900.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
         PortfolioSnapshot(
-            taken_at=datetime(2026, 1, 4, tzinfo=timezone.utc), total_value=1100.0,
-            unrealized_profit_loss=0.0, currency="USD",
+            taken_at=datetime(2026, 1, 4, tzinfo=timezone.utc),
+            total_value=1100.0,
+            unrealized_profit_loss=0.0,
+            currency="USD",
         ),
     ]
 

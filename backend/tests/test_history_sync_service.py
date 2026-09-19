@@ -116,7 +116,10 @@ def test_sync_order_fills_is_idempotent(db_session):
     """Running the sync twice should not create duplicate rows."""
     fake_client = MagicMock()
     fake_client.get_historical_orders.side_effect = [
-        ORDER_PAGE_1, ORDER_PAGE_2, ORDER_PAGE_1, ORDER_PAGE_2,
+        ORDER_PAGE_1,
+        ORDER_PAGE_2,
+        ORDER_PAGE_1,
+        ORDER_PAGE_2,
     ]
 
     sync_order_fills(db_session, fake_client)

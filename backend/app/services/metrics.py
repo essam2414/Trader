@@ -170,9 +170,7 @@ def compute_portfolio_metrics(
     average_losing_trade = -(gross_loss / len(losses)) if losses else 0.0
     expectancy = (win_rate * average_winning_trade) + (loss_rate * average_losing_trade)
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else None
-    payoff_ratio = (
-        average_winning_trade / abs(average_losing_trade) if average_losing_trade != 0 else None
-    )
+    payoff_ratio = average_winning_trade / abs(average_losing_trade) if average_losing_trade != 0 else None
     average_holding_period_hours = (
         sum(t.holding_period.total_seconds() for t in trades) / closed_trade_count / 3600
         if closed_trade_count
