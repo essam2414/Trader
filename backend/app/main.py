@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from .config import settings
 from .db import Base, engine
+from .rate_limiter import trading212_rate_limiter
 from .routers.portfolio import router as portfolio_router
 from .scheduler import run_history_sync_job, run_snapshot_job
 from .trading212 import Trading212Client
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
         api_key=settings.trading212_api_key,
         api_secret=settings.trading212_api_secret,
         base_url=settings.trading212_base_url,
+        rate_limiter=trading212_rate_limiter,
     )
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_snapshot_job, "interval", minutes=settings.snapshot_interval_minutes)

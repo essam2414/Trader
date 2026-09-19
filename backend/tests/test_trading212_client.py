@@ -1,6 +1,7 @@
 """Tests for the Trading212Client HTTP wrapper (auth headers, JSON parsing, error handling)."""
 
 import base64
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -145,6 +146,35 @@ def test_get_dividends_returns_items_and_next_page_path():
 
     assert page["items"][0]["ticker"] == "AAPL_US_EQ"
     assert page["nextPagePath"] is None
+
+
+@respx.mock
+def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
+    """Every outgoing call should go through the shared rate limiter first,
+    so the client never exceeds Trading212's documented request limit."""
+    respx.get(f"{BASE_URL}/equity/account/summary").mock(
+        return_value=httpx.Response(
+            200, json={"currency": "USD", "totalValue": 0, "cash": {}, "investments": {}}
+        )
+    )
+    respx.get(f"{BASE_URL}/equity/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    respx.get(f"{BASE_URL}/equity/history/dividends").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    fake_limiter = MagicMock()
+    client = Trading212Client(
+        api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=fake_limiter
+    )
+
+    client.get_account_summary()
+    client.get_positions()
+    client.get_historical_orders()
+    client.get_dividends()
+
+    assert fake_limiter.acquire.call_count == 4
 
 
 @respx.mock

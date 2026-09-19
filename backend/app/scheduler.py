@@ -7,6 +7,7 @@ to the snapshot service to capture and persist the current portfolio value.
 
 from .config import settings
 from .db import SessionLocal
+from .rate_limiter import trading212_rate_limiter
 from .services.history_sync import sync_history
 from .services.snapshot import take_snapshot
 from .trading212 import Trading212Client
@@ -18,6 +19,7 @@ def run_snapshot_job() -> None:
         api_key=settings.trading212_api_key,
         api_secret=settings.trading212_api_secret,
         base_url=settings.trading212_base_url,
+        rate_limiter=trading212_rate_limiter,
     )
     session = SessionLocal()
     try:
@@ -32,6 +34,7 @@ def run_history_sync_job() -> None:
         api_key=settings.trading212_api_key,
         api_secret=settings.trading212_api_secret,
         base_url=settings.trading212_base_url,
+        rate_limiter=trading212_rate_limiter,
     )
     session = SessionLocal()
     try:
