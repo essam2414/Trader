@@ -43,6 +43,23 @@ def test_match_trades_matches_fifo_across_partial_lots():
     assert trades[1].pnl == pytest.approx(20.0)
 
 
+def test_match_trades_normalizes_trading212s_signed_quantities():
+    """Trading212 signs fill quantity by direction (negative for SELL,
+    positive for BUY) rather than always sending a positive magnitude - the
+    matcher must normalize this or every sell's `remaining` starts negative
+    and never matches anything."""
+    fills = [
+        _fill("1", "AAPL_US_EQ", "BUY", 10.0, 100.0, datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        _fill("2", "AAPL_US_EQ", "SELL", -10.0, 110.0, datetime(2026, 1, 5, tzinfo=timezone.utc)),
+    ]
+
+    trades = match_trades(fills)
+
+    assert len(trades) == 1
+    assert trades[0].quantity == 10.0
+    assert trades[0].pnl == pytest.approx(100.0)
+
+
 def test_match_trades_accounts_for_entry_and_exit_fees():
     """FIFO P&L should subtract both the buy fill's and sell fill's fees, prorated by quantity."""
     fills = [

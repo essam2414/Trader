@@ -44,6 +44,10 @@ def match_trades(fills: list[OrderFill]) -> list[ClosedTrade]:
     consumed. Unmatched open buy lots (still-open positions) produce no
     trade. Fees are prorated to the matched quantity on both the entry (buy)
     and exit (sell) side.
+
+    Trading212 signs fill quantity by direction (negative for SELL, positive
+    for BUY) rather than sending a plain magnitude; `side` already carries
+    the direction, so quantity is normalized to its absolute value here.
     """
     fills_by_ticker: dict[str, list[OrderFill]] = defaultdict(list)
     for fill in fills:
@@ -53,19 +57,20 @@ def match_trades(fills: list[OrderFill]) -> list[ClosedTrade]:
     for ticker, ticker_fills in fills_by_ticker.items():
         open_lots: deque = deque()
         for fill in sorted(ticker_fills, key=lambda f: f.filled_at):
+            quantity = abs(fill.quantity)
             if fill.side == "BUY":
-                fee_per_unit = fill.fees / fill.quantity if fill.quantity else 0.0
+                fee_per_unit = fill.fees / quantity if quantity else 0.0
                 open_lots.append(
                     {
-                        "quantity": fill.quantity,
+                        "quantity": quantity,
                         "price": fill.fill_price,
                         "filled_at": fill.filled_at,
                         "fee_per_unit": fee_per_unit,
                     }
                 )
             elif fill.side == "SELL":
-                remaining = fill.quantity
-                sell_fee_per_unit = fill.fees / fill.quantity if fill.quantity else 0.0
+                remaining = quantity
+                sell_fee_per_unit = fill.fees / quantity if quantity else 0.0
                 while remaining > 1e-9 and open_lots:
                     lot = open_lots[0]
                     matched_qty = min(remaining, lot["quantity"])
