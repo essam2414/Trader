@@ -1,0 +1,5 @@
+# Project-scoped, read-only documentation lookup. Context7 is available when
+# a task needs version-specific third-party library or framework guidance.
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]

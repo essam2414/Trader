@@ -1,38 +1,25 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Product and Structure
 
-Trader is a read-only Trading212 portfolio dashboard. The FastAPI backend lives in `backend/app/`; API routes are in `routers/`, business logic in `services/`, and pytest coverage in `backend/tests/`. The Next.js 14 frontend lives in `frontend/`: App Router pages are under `app/`, reusable UI under `components/`, shared API/types/helpers under `lib/`, and Vitest files are colocated in `__tests__/`. Design notes and implementation plans belong in `docs/superpowers/`. CI is defined in `.github/workflows/ci.yml`.
+Trader is a local, read-only Trading212 decision-support app for swing trading; it must never place trades. The FastAPI API in `backend/app/` owns Trading212 access, calculations, sync jobs, and database writes. Routes live in `routers/`, business logic in `services/`, and pytest coverage in `backend/tests/`.
 
-Keep `frontend/lib/types.ts` synchronized with Pydantic response models in `backend/app/schemas.py`. Components should receive data as props; server-side fetching belongs in `lib/api.ts` or App Router server components.
+The Next.js 16 / React 19 frontend is in `frontend/`: App Router pages are under `app/`, reusable UI is in `components/`, shared API/types code is in `lib/`, and Vitest tests are colocated in `__tests__/`. Keep `frontend/lib/types.ts` aligned with Pydantic models in `backend/app/schemas.py`.
 
-## Build, Test, and Development Commands
+Use local PostgreSQL through `DATABASE_URL`. Do not add hosted deployment, Supabase, or GitHub integrations unless explicitly requested. `CLAUDE.md` is historical context; `AGENTS.md`, `.agents/skills/`, and `.codex/config.toml` are active Codex guidance.
 
-Run backend commands from `backend/`:
+## Commands and Quality
 
-- `pip install -r requirements-dev.txt` installs runtime and development dependencies.
-- `python -m uvicorn app.main:app --reload` starts the API locally.
-- `python -m pytest -v` runs all backend tests.
-- `ruff check .` and `ruff format --check .` match CI lint and formatting checks.
+From `backend/`, run `python -m uvicorn app.main:app --reload`, `python -m pytest -v`, `ruff check .`, and `ruff format --check .`. From `frontend/`, use `npm ci` for a clean install, then `npm run dev`, `npm run lint`, `npm run test`, and `npm run build`.
 
-Run frontend commands from `frontend/`:
+Python targets 3.13: four spaces, type hints, `snake_case`, and Ruff's 110-character limit. TypeScript is strict: two spaces, `camelCase` values, and `PascalCase` components. Prefer Tailwind CSS 4 utilities. Add regression coverage for fixes: backend tests use `test_<feature>.py`; frontend tests use `<Unit>.test.tsx`. Run focused tests while working and relevant checks before handoff.
 
-- `npm ci` performs a lockfile-exact install (`npm install` is suitable when updating dependencies).
-- `npm run dev` starts Next.js on port 3000.
-- `npm run test`, `npm run lint`, and `npm run build` reproduce frontend CI checks.
+## Desktop UI and Financial Safety
 
-## Coding Style & Naming Conventions
+The persistent sidebar in `components/Sidebar.tsx` links Dashboard, Positions, History, Watchlist, and Settings. Unimplemented routes use `components/UnderDevelopment.tsx`. This is desktop-first: retain the `min-w-[1024px]` shell and capped content widths; use flexible Grid/Flex layouts so larger monitors gain whitespace, not oversized controls.
 
-Python targets 3.13, uses four-space indentation, type hints, and Ruff (`E`, `F`, `I`; 110-character lines). Use `snake_case` for functions/modules and `PascalCase` for classes. TypeScript uses strict typing, two-space indentation, `camelCase` values, and `PascalCase` React components/files. Prefer Tailwind utility classes and named component exports. Never expose backend credentials through `NEXT_PUBLIC_` variables.
+Never expose credentials through `NEXT_PUBLIC_` variables or commit `.env` files. Preserve read-only Trading212 scope. Do not silently alter fee, tax, FX, or realised/unrealised P&L behaviour; add targeted tests. Prefer `Decimal` and database numeric types for new money fields.
 
-## Testing Guidelines
+## Codex Tools and Skills
 
-Use pytest and respx for backend tests; name files `test_<feature>.py` and tests `test_<behavior>`. Use Vitest plus Testing Library for frontend behavior, with `<Unit>.test.ts(x)` names. Add regression tests with fixes and cover success, error, and boundary cases. Run the relevant focused test while developing, then the complete suite before submission.
-
-## Commit & Pull Request Guidelines
-
-History follows Conventional Commit prefixes such as `feat:`, `fix:`, and `docs:`. Keep commits focused and subjects imperative. Pull requests should explain the change and validation performed, link relevant issues or design documents, and include screenshots for UI changes. Ensure lint, tests, formatting, and the production build pass before requesting review.
-
-## Security & Configuration
-
-Copy `backend/.env.example` to `.env` and `frontend/.env.local.example` to `.env.local`. Use the same `DASHBOARD_API_KEY` in both, never commit secrets or local databases, and preserve the backend's read-only Trading212 scope.
+Use Context7, configured in `.codex/config.toml`, when version-specific documentation matters. Select `diagnosing-bugs` for reported failures, `tdd` for test-first work, `codebase-design` or `domain-modeling` for design decisions, `code-review` for a defined change set, and `playwright` for browser validation. `ask-matt`, `grill-with-docs`, `improve-codebase-architecture`, and `setup-matt-pocock-skills` require explicit user invocation.
