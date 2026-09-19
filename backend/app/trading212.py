@@ -48,11 +48,14 @@ class Trading212Client:
         self._rate_limiter = rate_limiter
 
     def _get(self, path: str, params: dict[str, str | int] | None = None) -> httpx.Response:
-        if self._rate_limiter is not None:
-            self._rate_limiter.acquire()
-        response = self._client.get(path, params=params or {})
-        response.raise_for_status()
-        return response
+        if self._rate_limiter is None:
+            response = self._client.get(path, params=params or {})
+            response.raise_for_status()
+            return response
+        with self._rate_limiter:
+            response = self._client.get(path, params=params or {})
+            response.raise_for_status()
+            return response
 
     def get_account_summary(self) -> dict:
         """Retrieve account summary information.

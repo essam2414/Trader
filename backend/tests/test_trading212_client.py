@@ -1,12 +1,15 @@
 """Tests for the Trading212Client HTTP wrapper (auth headers, JSON parsing, error handling)."""
 
 import base64
+import threading
+import time
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 import respx
 
+from app.rate_limiter import RateLimiter
 from app.trading212 import Trading212Client
 
 BASE_URL = "https://live.trading212.com/api/v0"
@@ -165,6 +168,8 @@ def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
         return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
     )
     fake_limiter = MagicMock()
+    fake_limiter.__enter__ = MagicMock(return_value=fake_limiter)
+    fake_limiter.__exit__ = MagicMock(return_value=False)
     client = Trading212Client(
         api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=fake_limiter
     )
@@ -174,7 +179,42 @@ def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
     client.get_historical_orders()
     client.get_dividends()
 
-    assert fake_limiter.acquire.call_count == 4
+    assert fake_limiter.__enter__.call_count == 4
+    assert fake_limiter.__exit__.call_count == 4
+
+
+@respx.mock
+def test_shared_rate_limiter_prevents_concurrent_requests_across_threads():
+    """A real RateLimiter shared by one client, called from multiple threads at
+    once, should never let two HTTP calls to Trading212 overlap - regression
+    test for the bug where the limiter released its lock before the request
+    fired, letting concurrent callers race and trip Trading212's own
+    simultaneous-request rejection."""
+    concurrent_count = 0
+    max_concurrent = 0
+    guard = threading.Lock()
+
+    def slow_response(request):
+        nonlocal concurrent_count, max_concurrent
+        with guard:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        time.sleep(0.05)
+        with guard:
+            concurrent_count -= 1
+        return httpx.Response(200, json={"currency": "USD", "totalValue": 0, "cash": {}, "investments": {}})
+
+    respx.get(f"{BASE_URL}/equity/account/summary").mock(side_effect=slow_response)
+    limiter = RateLimiter(max_calls=100, period=60.0)
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=limiter)
+
+    threads = [threading.Thread(target=client.get_account_summary) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert max_concurrent == 1
 
 
 @respx.mock

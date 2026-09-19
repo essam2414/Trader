@@ -1,6 +1,10 @@
 """Sliding-window rate limiter, used to keep calls to the Trading212 API
-under its documented request limit (6 requests per 60 seconds, observed to
-apply account-wide rather than per-endpoint).
+under its documented request limit (6 requests per 60 seconds). Trading212
+also rejects genuinely *simultaneous* requests outright ("too many
+requests") independent of that count, so this limiter is a full
+serialization gate: `with limiter:` holds its lock for the caller's whole
+critical section (the HTTP call), not just its own bookkeeping, so two
+threads can never have a Trading212 request in flight at the same time.
 
 A single shared `trading212_rate_limiter` instance is used everywhere a
 Trading212Client is constructed (the live shared client in `main.py`'s
@@ -15,10 +19,10 @@ from typing import Callable
 
 
 class RateLimiter:
-    """Blocks the caller as needed so no more than `max_calls` calls happen
-    within any rolling `period`-second window. Thread-safe, since the shared
-    instance may be used from FastAPI request handlers and the background
-    scheduler at the same time."""
+    """A context manager: `with limiter:` blocks until making another call
+    would stay within `max_calls` calls per rolling `period`-second window,
+    then holds its lock until the block exits — serializing every caller
+    against every other, across threads."""
 
     def __init__(
         self,
@@ -34,17 +38,19 @@ class RateLimiter:
         self._calls: deque[float] = deque()
         self._lock = threading.Lock()
 
-    def acquire(self) -> None:
-        """Block until making another call would stay within the limit, then
-        record this call."""
-        with self._lock:
+    def __enter__(self) -> "RateLimiter":
+        self._lock.acquire()
+        self._evict_expired()
+        if len(self._calls) >= self._max_calls:
+            wait = self._period - (self._time() - self._calls[0])
+            if wait > 0:
+                self._sleep(wait)
             self._evict_expired()
-            if len(self._calls) >= self._max_calls:
-                wait = self._period - (self._time() - self._calls[0])
-                if wait > 0:
-                    self._sleep(wait)
-                self._evict_expired()
-            self._calls.append(self._time())
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._calls.append(self._time())
+        self._lock.release()
 
     def _evict_expired(self) -> None:
         now = self._time()
