@@ -1,7 +1,8 @@
 // Tests for TradeHistoryTable: verifies row rendering (ticker, entry/exit
-// price and date, quantity, P/L, holding period) and the empty-state message.
+// price and date, quantity, P/L, holding period), the empty-state message,
+// and pagination (10 rows/page) when there are more than 10 trades.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { formatCurrency } from "../../lib/format";
 import type { Trade } from "../../lib/types";
@@ -17,6 +18,10 @@ const TRADE: Trade = {
   pnl: 98,
   holdingPeriodHours: 96,
 };
+
+function makeTrades(count: number): Trade[] {
+  return Array.from({ length: count }, (_, i) => ({ ...TRADE, ticker: `TICK${i}_US_EQ` }));
+}
 
 describe("TradeHistoryTable", () => {
   it("renders a row per trade with entry/exit details and P/L", () => {
@@ -34,5 +39,20 @@ describe("TradeHistoryTable", () => {
     render(<TradeHistoryTable trades={[]} currency="USD" />);
 
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
+  });
+
+  it("shows only the first 10 rows and reveals the next 10 after clicking Next", () => {
+    render(<TradeHistoryTable trades={makeTrades(15)} currency="USD" />);
+
+    expect(screen.getByText("TICK0_US_EQ")).toBeInTheDocument();
+    expect(screen.getByText("TICK9_US_EQ")).toBeInTheDocument();
+    expect(screen.queryByText("TICK10_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("1–10 of 15")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(screen.getByText("TICK10_US_EQ")).toBeInTheDocument();
+    expect(screen.getByText("TICK14_US_EQ")).toBeInTheDocument();
+    expect(screen.queryByText("TICK0_US_EQ")).not.toBeInTheDocument();
   });
 });
