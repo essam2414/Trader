@@ -45,7 +45,7 @@ export function EquityCurveChart({ snapshots }: { snapshots: PortfolioSnapshot[]
             fontSize: 12,
           }}
           labelStyle={{ color: "#a1a1aa" }}
-          formatter={(value: number) => [value.toLocaleString(), "Value"]}
+          formatter={(value) => [typeof value === "number" ? value.toLocaleString() : "-", "Value"]}
         />
         <Area type="monotone" dataKey="value" stroke={AMBER} strokeWidth={2} fill="url(#equityFill)" />
       </AreaChart>
