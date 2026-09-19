@@ -37,3 +37,48 @@ export interface PortfolioSnapshot {
   totalValue: number;
   unrealizedProfitLoss: number;
 }
+
+export interface TickerPerformance {
+  ticker: string;
+  realizedPnl: number;
+  tradeCount: number;
+  winRate: number;
+}
+
+export interface Trade {
+  ticker: string;
+  quantity: number;
+  entryPrice: number;
+  entryAt: string;
+  exitPrice: number;
+  exitAt: string;
+  pnl: number;
+  holdingPeriodHours: number;
+}
+
+export interface PortfolioMetrics {
+  realizedPnl: number;
+  trading212RealizedPnl: number;
+  winRate: number;
+  averageWinningTrade: number;
+  averageLosingTrade: number;
+  expectancy: number;
+  profitFactor: number | null;
+  payoffRatio: number | null;
+  averageHoldingPeriodHours: number;
+  bestTradePnl: number | null;
+  worstTradePnl: number | null;
+  currentStreak: number;
+  longestWinStreak: number;
+  longestLossStreak: number;
+  closedTradeCount: number;
+  performanceByTicker: TickerPerformance[];
+  entriesByDayOfWeek: Record<string, number>;
+  exitsByDayOfWeek: Record<string, number>;
+  entriesByHourOfDay: Record<string, number>;
+  exitsByHourOfDay: Record<string, number>;
+  maxDrawdown: number;
+  dividendIncome: number;
+  dividendIncomeByTicker: Record<string, number>;
+  trades: Trade[];
+}

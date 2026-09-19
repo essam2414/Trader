@@ -62,9 +62,9 @@ trades for mistakes. Planned capabilities:
   contract with the frontend), `routers/portfolio.py` (`GET /api/portfolio/current`,
   `GET /api/portfolio/history`), `scheduler.py` + `services/snapshot.py` (APScheduler job that
   periodically persists a portfolio snapshot), `main.py` (app wiring/lifespan). No Alembic yet —
-  `Base.metadata.create_all()` is sufficient for the one table so far. SQLite locally,
-  Postgres (Supabase) in production via `DATABASE_URL`.
-- **Frontend** (`frontend/`): Next.js 14 App Router + TypeScript + Tailwind. `app/page.tsx` is an
+  local development currently uses PostgreSQL through `DATABASE_URL` (the SQLite setting is only
+  a fallback).
+- **Frontend** (`frontend/`): Next.js 16 App Router + React 19 + TypeScript + Tailwind 4. `app/page.tsx` is an
   async Server Component (`export const dynamic = "force-dynamic"` — must never be statically
   prerendered, since it always needs live data and would otherwise fail the production build
   when no backend is reachable at build time) that fetches from the backend server-side via

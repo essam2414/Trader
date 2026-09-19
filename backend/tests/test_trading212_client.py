@@ -1,11 +1,15 @@
 """Tests for the Trading212Client HTTP wrapper (auth headers, JSON parsing, error handling)."""
 
 import base64
+import threading
+import time
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 import respx
 
+from app.rate_limiter import RateLimiter
 from app.trading212 import Trading212Client
 
 BASE_URL = "https://live.trading212.com/api/v0"
@@ -78,6 +82,139 @@ def test_get_positions_returns_list_of_positions():
 
     assert len(positions) == 1
     assert positions[0]["instrument"]["ticker"] == "NVDA_US_EQ"
+
+
+@respx.mock
+def test_get_historical_orders_returns_items_and_next_page_path():
+    """get_historical_orders should return the parsed page (items + nextPagePath)."""
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"order": {"id": 1, "ticker": "AAPL_US_EQ"}, "fill": {"id": 101}}],
+                "nextPagePath": "/api/v0/equity/history/orders?cursor=2&limit=50",
+            },
+        )
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    page = client.get_historical_orders()
+
+    assert page["items"][0]["fill"]["id"] == 101
+    assert page["nextPagePath"] == "/api/v0/equity/history/orders?cursor=2&limit=50"
+
+
+@respx.mock
+def test_get_historical_orders_sends_cursor_as_query_param():
+    """When given a cursor, get_historical_orders should send it as a query param."""
+    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2"}).mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    client.get_historical_orders(cursor=2)
+
+    assert route.called
+
+
+@respx.mock
+def test_get_historical_orders_omits_cursor_param_on_first_page():
+    """With no cursor given, the request should not include a cursor query param at all."""
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    client.get_historical_orders()
+
+    request = respx.calls[-1].request
+    assert "cursor" not in request.url.params
+
+
+@respx.mock
+def test_get_dividends_returns_items_and_next_page_path():
+    """get_dividends should return the parsed page (items + nextPagePath)."""
+    respx.get(f"{BASE_URL}/equity/history/dividends").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"ticker": "AAPL_US_EQ", "amount": 5.0}],
+                "nextPagePath": None,
+            },
+        )
+    )
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
+
+    page = client.get_dividends()
+
+    assert page["items"][0]["ticker"] == "AAPL_US_EQ"
+    assert page["nextPagePath"] is None
+
+
+@respx.mock
+def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
+    """Every outgoing call should go through the shared rate limiter first,
+    so the client never exceeds Trading212's documented request limit."""
+    respx.get(f"{BASE_URL}/equity/account/summary").mock(
+        return_value=httpx.Response(
+            200, json={"currency": "USD", "totalValue": 0, "cash": {}, "investments": {}}
+        )
+    )
+    respx.get(f"{BASE_URL}/equity/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{BASE_URL}/equity/history/orders").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    respx.get(f"{BASE_URL}/equity/history/dividends").mock(
+        return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
+    )
+    fake_limiter = MagicMock()
+    fake_limiter.__enter__ = MagicMock(return_value=fake_limiter)
+    fake_limiter.__exit__ = MagicMock(return_value=False)
+    client = Trading212Client(
+        api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=fake_limiter
+    )
+
+    client.get_account_summary()
+    client.get_positions()
+    client.get_historical_orders()
+    client.get_dividends()
+
+    assert fake_limiter.__enter__.call_count == 4
+    assert fake_limiter.__exit__.call_count == 4
+
+
+@respx.mock
+def test_shared_rate_limiter_prevents_concurrent_requests_across_threads():
+    """A real RateLimiter shared by one client, called from multiple threads at
+    once, should never let two HTTP calls to Trading212 overlap - regression
+    test for the bug where the limiter released its lock before the request
+    fired, letting concurrent callers race and trip Trading212's own
+    simultaneous-request rejection."""
+    concurrent_count = 0
+    max_concurrent = 0
+    guard = threading.Lock()
+
+    def slow_response(request):
+        nonlocal concurrent_count, max_concurrent
+        with guard:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        time.sleep(0.05)
+        with guard:
+            concurrent_count -= 1
+        return httpx.Response(200, json={"currency": "USD", "totalValue": 0, "cash": {}, "investments": {}})
+
+    respx.get(f"{BASE_URL}/equity/account/summary").mock(side_effect=slow_response)
+    limiter = RateLimiter(max_calls=100, period=60.0)
+    client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=limiter)
+
+    threads = [threading.Thread(target=client.get_account_summary) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert max_concurrent == 1
 
 
 @respx.mock

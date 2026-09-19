@@ -47,3 +47,48 @@ class PortfolioSnapshotOut(BaseModel):
     takenAt: datetime
     totalValue: float
     unrealizedProfitLoss: float
+
+
+class TickerPerformanceOut(BaseModel):
+    ticker: str
+    realizedPnl: float
+    tradeCount: int
+    winRate: float
+
+
+class TradeOut(BaseModel):
+    ticker: str
+    quantity: float
+    entryPrice: float
+    entryAt: datetime
+    exitPrice: float
+    exitAt: datetime
+    pnl: float
+    holdingPeriodHours: float
+
+
+class PortfolioMetricsOut(BaseModel):
+    realizedPnl: float
+    trading212RealizedPnl: float
+    winRate: float
+    averageWinningTrade: float
+    averageLosingTrade: float
+    expectancy: float
+    profitFactor: float | None
+    payoffRatio: float | None
+    averageHoldingPeriodHours: float
+    bestTradePnl: float | None
+    worstTradePnl: float | None
+    currentStreak: int
+    longestWinStreak: int
+    longestLossStreak: int
+    closedTradeCount: int
+    performanceByTicker: list[TickerPerformanceOut]
+    entriesByDayOfWeek: dict[str, int]
+    exitsByDayOfWeek: dict[str, int]
+    entriesByHourOfDay: dict[str, int]
+    exitsByHourOfDay: dict[str, int]
+    maxDrawdown: float
+    dividendIncome: float
+    dividendIncomeByTicker: dict[str, float]
+    trades: list[TradeOut]

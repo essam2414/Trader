@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./dev.db"
     dashboard_api_key: str
     snapshot_interval_minutes: int = 15
+    history_sync_interval_minutes: int = 60
 
 
 settings = Settings()

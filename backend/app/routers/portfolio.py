@@ -11,8 +11,18 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_api_key
 from ..dependencies import get_db, get_trading212_client
-from ..models import PortfolioSnapshot
-from ..schemas import AccountSummary, CashBreakdown, PortfolioCurrent, PortfolioSnapshotOut, Position
+from ..models import Dividend, OrderFill, PortfolioSnapshot
+from ..schemas import (
+    AccountSummary,
+    CashBreakdown,
+    PortfolioCurrent,
+    PortfolioMetricsOut,
+    PortfolioSnapshotOut,
+    Position,
+    TickerPerformanceOut,
+    TradeOut,
+)
+from ..services.metrics import compute_portfolio_metrics
 from ..trading212 import Trading212Client
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
@@ -70,3 +80,64 @@ def get_portfolio_history(db: Session = Depends(get_db)) -> list[PortfolioSnapsh
         )
         for row in rows
     ]
+
+
+@router.get("/portfolio/metrics", response_model=PortfolioMetricsOut)
+def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
+    """Compute trade performance metrics purely from synced Trading212 history
+    stored in the DB. Deliberately makes no live Trading212 call: cash drag
+    needs only totalValue/cash.availableToTrade, both of which the frontend
+    already has from /portfolio/current, which it fetches in the same
+    dashboard load - an independent call here would just race that one for
+    Trading212's request budget for no benefit."""
+    fills = db.query(OrderFill).order_by(OrderFill.filled_at).all()
+    dividends = db.query(Dividend).all()
+    snapshots = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.taken_at).all()
+    metrics = compute_portfolio_metrics(fills, dividends, snapshots)
+
+    return PortfolioMetricsOut(
+        realizedPnl=metrics.realized_pnl,
+        trading212RealizedPnl=metrics.trading212_realized_pnl,
+        winRate=metrics.win_rate,
+        averageWinningTrade=metrics.average_winning_trade,
+        averageLosingTrade=metrics.average_losing_trade,
+        expectancy=metrics.expectancy,
+        profitFactor=metrics.profit_factor,
+        payoffRatio=metrics.payoff_ratio,
+        averageHoldingPeriodHours=metrics.average_holding_period_hours,
+        bestTradePnl=metrics.best_trade_pnl,
+        worstTradePnl=metrics.worst_trade_pnl,
+        currentStreak=metrics.current_streak,
+        longestWinStreak=metrics.longest_win_streak,
+        longestLossStreak=metrics.longest_loss_streak,
+        closedTradeCount=metrics.closed_trade_count,
+        performanceByTicker=[
+            TickerPerformanceOut(
+                ticker=tp.ticker,
+                realizedPnl=tp.realized_pnl,
+                tradeCount=tp.trade_count,
+                winRate=tp.win_rate,
+            )
+            for tp in metrics.performance_by_ticker
+        ],
+        entriesByDayOfWeek=metrics.entries_by_day_of_week,
+        exitsByDayOfWeek=metrics.exits_by_day_of_week,
+        entriesByHourOfDay=metrics.entries_by_hour_of_day,
+        exitsByHourOfDay=metrics.exits_by_hour_of_day,
+        maxDrawdown=metrics.max_drawdown,
+        dividendIncome=metrics.dividend_income,
+        dividendIncomeByTicker=metrics.dividend_income_by_ticker,
+        trades=[
+            TradeOut(
+                ticker=t.ticker,
+                quantity=t.quantity,
+                entryPrice=t.entry_price,
+                entryAt=t.entry_at,
+                exitPrice=t.exit_price,
+                exitAt=t.exit_at,
+                pnl=t.pnl,
+                holdingPeriodHours=t.holding_period.total_seconds() / 3600,
+            )
+            for t in metrics.closed_trades
+        ],
+    )

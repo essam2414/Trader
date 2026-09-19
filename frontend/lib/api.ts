@@ -2,7 +2,7 @@
 // This module runs only in Next.js Server Components and uses process.env without NEXT_PUBLIC_ prefix
 // because BACKEND_URL and DASHBOARD_API_KEY must never be exposed to client-side JavaScript.
 
-import type { PortfolioCurrent, PortfolioSnapshot } from "./types";
+import type { PortfolioCurrent, PortfolioMetrics, PortfolioSnapshot } from "./types";
 
 function backendUrl(path: string): string {
   const base = process.env.BACKEND_URL;
@@ -38,6 +38,17 @@ export async function getPortfolioHistory(): Promise<PortfolioSnapshot[]> {
   });
   if (!response.ok) {
     throw new Error(`Failed to fetch portfolio history: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getPortfolioMetrics(): Promise<PortfolioMetrics> {
+  const response = await fetch(backendUrl("/api/portfolio/metrics"), {
+    headers: authHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch portfolio metrics: ${response.status}`);
   }
   return response.json();
 }

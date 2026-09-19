@@ -1,12 +1,14 @@
 """Tests for the /api/portfolio routes (current portfolio and history)."""
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from app.dependencies import get_trading212_client
 from app.main import app
-from app.models import PortfolioSnapshot
+from app.models import OrderFill, PortfolioSnapshot
 
 FAKE_SUMMARY = {
     "id": 1,
@@ -92,3 +94,64 @@ def test_get_portfolio_history_returns_stored_snapshots(client, db_session):
     body = response.json()
     assert len(body) == 1
     assert body[0]["totalValue"] == 100.0
+
+
+def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(client, db_session):
+    """The endpoint should compute metrics purely from synced DB history - no
+    Trading212 call needed, so it can't fail or contend with /portfolio/current
+    for Trading212's request budget when both are fetched concurrently on
+    every dashboard load."""
+    db_session.add_all(
+        [
+            OrderFill(
+                id="1",
+                order_id="1",
+                ticker="AAPL_US_EQ",
+                side="BUY",
+                quantity=10.0,
+                fill_price=100.0,
+                net_value=1000.0,
+                realised_profit_loss=0.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            OrderFill(
+                id="2",
+                order_id="2",
+                ticker="AAPL_US_EQ",
+                side="SELL",
+                quantity=10.0,
+                fill_price=110.0,
+                net_value=1100.0,
+                realised_profit_loss=100.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=datetime(2026, 1, 5, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/api/portfolio/metrics", headers=AUTH_HEADER)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["closedTradeCount"] == 1
+    assert body["realizedPnl"] == pytest.approx(100.0)
+    assert body["winRate"] == pytest.approx(1.0)
+    assert "cashDrag" not in body
+    assert len(body["trades"]) == 1
+    trade = body["trades"][0]
+    assert trade["ticker"] == "AAPL_US_EQ"
+    assert trade["quantity"] == 10.0
+    assert trade["entryPrice"] == 100.0
+    assert trade["exitPrice"] == 110.0
+    assert trade["pnl"] == pytest.approx(100.0)
+    assert trade["holdingPeriodHours"] == pytest.approx(96.0)
+
+
+def test_get_portfolio_metrics_requires_auth(client):
+    response = client.get("/api/portfolio/metrics")
+
+    assert response.status_code == 401
