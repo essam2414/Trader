@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from .config import settings
 from .db import Base, engine
 from .routers.portfolio import router as portfolio_router
-from .scheduler import run_snapshot_job
+from .scheduler import run_history_sync_job, run_snapshot_job
 from .trading212 import Trading212Client
 
 
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     )
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_snapshot_job, "interval", minutes=settings.snapshot_interval_minutes)
+    scheduler.add_job(run_history_sync_job, "interval", minutes=settings.history_sync_interval_minutes)
     scheduler.start()
     app.state.scheduler = scheduler
     yield

@@ -7,6 +7,7 @@ to the snapshot service to capture and persist the current portfolio value.
 
 from .config import settings
 from .db import SessionLocal
+from .services.history_sync import sync_history
 from .services.snapshot import take_snapshot
 from .trading212 import Trading212Client
 
@@ -21,5 +22,19 @@ def run_snapshot_job() -> None:
     session = SessionLocal()
     try:
         take_snapshot(session, client)
+    finally:
+        session.close()
+
+
+def run_history_sync_job() -> None:
+    """Sync Trading212 order/dividend history; invoked on a timer by the scheduler."""
+    client = Trading212Client(
+        api_key=settings.trading212_api_key,
+        api_secret=settings.trading212_api_secret,
+        base_url=settings.trading212_base_url,
+    )
+    session = SessionLocal()
+    try:
+        sync_history(session, client)
     finally:
         session.close()
