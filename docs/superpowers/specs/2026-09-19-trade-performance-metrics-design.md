@@ -168,17 +168,27 @@ future sells); the matcher handles partial-lot consumption.
 **From the `dividends` table:**
 - Dividend income — total, and broken down by ticker
 
-**From the live account summary (no sync needed):**
-- Cash drag — `cash.availableToTrade / totalValue`
+**From the frontend's existing `/api/portfolio/current` response (no new call):**
+- Cash drag — `cash.availableToTrade / totalValue`, computed client-side in `page.tsx` from
+  data the dashboard already fetches for the portfolio summary section.
+
+  *(Revision: the first implementation had the backend fetch this live, via its own
+  `get_account_summary()` call inside `/api/portfolio/metrics`. Since the dashboard already
+  fetches `/api/portfolio/current` — which includes `totalValue` and `cash` — concurrently on
+  every page load, that meant two independent live calls to the same Trading212 endpoint in
+  the same instant. Trading212 intermittently rejects that as "too many requests," reproduced
+  against the live account. Moved to the frontend to eliminate the redundant call entirely.)*
 
 ## API
 
 New endpoint: `GET /api/portfolio/metrics`, same auth (`require_api_key`) as the existing
 portfolio routes. Returns one payload containing all metrics above — total P&L/win-rate/etc.
-figures, the by-ticker breakdown, and the entry/exit timing distribution. Reads `order_fills`,
-`dividends`, and `portfolio_snapshots` from the DB, plus a live call to
-`get_account_summary()` for cash drag; no other live Trading212 calls (history is served from
-the synced tables, not fetched per-request).
+figures, the by-ticker breakdown, and the entry/exit timing distribution. Reads only
+`order_fills`, `dividends`, and `portfolio_snapshots` from the DB — **no live Trading212 call
+at all**. Across the whole app, exactly one code path makes a live, per-request Trading212
+call: `GET /api/portfolio/current` (account summary + positions, pre-existing from phase 1).
+Everything else is either read from these synced tables (populated by the scheduled sync job)
+or computed client-side from `/current`'s own response.
 
 ## Frontend
 
