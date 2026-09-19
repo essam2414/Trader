@@ -91,3 +91,19 @@ def match_trades(fills: list[OrderFill]) -> list[ClosedTrade]:
 
     trades.sort(key=lambda t: t.exit_at)
     return trades
+
+
+def compute_max_drawdown(snapshots: list[PortfolioSnapshot]) -> float:
+    """Largest peak-to-trough decline across the equity-curve snapshots, as a
+    fraction of the peak (e.g. 0.25 = a 25% decline from the running high)."""
+    if len(snapshots) < 2:
+        return 0.0
+    ordered = sorted(snapshots, key=lambda s: s.taken_at)
+    peak = ordered[0].total_value
+    max_drawdown = 0.0
+    for snapshot in ordered:
+        peak = max(peak, snapshot.total_value)
+        if peak > 0:
+            drawdown = (peak - snapshot.total_value) / peak
+            max_drawdown = max(max_drawdown, drawdown)
+    return max_drawdown

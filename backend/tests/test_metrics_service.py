@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models import OrderFill
-from app.services.metrics import match_trades
+from app.models import OrderFill, PortfolioSnapshot
+from app.services.metrics import compute_max_drawdown, match_trades
 
 
 def _fill(fill_id, ticker, side, quantity, price, filled_at, fees=0.0, realised_profit_loss=0.0):
@@ -73,3 +73,41 @@ def test_match_trades_keeps_tickers_independent():
     ]
 
     assert match_trades(fills) == []
+
+
+def test_compute_max_drawdown_finds_largest_peak_to_trough_decline():
+    snapshots = [
+        PortfolioSnapshot(
+            taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc), total_value=1000.0,
+            unrealized_profit_loss=0.0, currency="USD",
+        ),
+        PortfolioSnapshot(
+            taken_at=datetime(2026, 1, 2, tzinfo=timezone.utc), total_value=1200.0,
+            unrealized_profit_loss=0.0, currency="USD",
+        ),
+        PortfolioSnapshot(
+            taken_at=datetime(2026, 1, 3, tzinfo=timezone.utc), total_value=900.0,
+            unrealized_profit_loss=0.0, currency="USD",
+        ),
+        PortfolioSnapshot(
+            taken_at=datetime(2026, 1, 4, tzinfo=timezone.utc), total_value=1100.0,
+            unrealized_profit_loss=0.0, currency="USD",
+        ),
+    ]
+
+    assert compute_max_drawdown(snapshots) == pytest.approx(0.25)
+
+
+def test_compute_max_drawdown_is_zero_with_fewer_than_two_snapshots():
+    assert compute_max_drawdown([]) == 0.0
+    assert (
+        compute_max_drawdown(
+            [
+                PortfolioSnapshot(
+                    taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc), total_value=1000.0,
+                    unrealized_profit_loss=0.0, currency="USD",
+                )
+            ]
+        )
+        == 0.0
+    )
