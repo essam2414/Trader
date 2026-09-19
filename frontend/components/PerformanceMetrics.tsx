@@ -21,6 +21,20 @@ function formatRatio(value: number | null): string {
   return value === null ? "—" : value.toFixed(2);
 }
 
+function ratioColor(value: number | null): string {
+  if (value === null) return "text-zinc-100";
+  return value >= 1 ? "text-emerald-400" : "text-rose-400";
+}
+
+function Tile({ label, value, valueClassName = "text-zinc-100" }: { label: string; value: string; valueClassName?: string }) {
+  return (
+    <div className="p-5">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className={`mt-1 font-mono text-2xl font-semibold ${valueClassName}`}>{value}</p>
+    </div>
+  );
+}
+
 export function PerformanceMetrics({
   metrics,
   cashDrag,
@@ -32,45 +46,28 @@ export function PerformanceMetrics({
 }) {
   const isProfit = metrics.realizedPnl >= 0;
   return (
-    <div className="grid grid-cols-2 gap-4 rounded-lg border border-neutral-200 p-6 sm:grid-cols-4">
-      <div>
-        <p className="text-sm text-neutral-500">Realized P/L</p>
-        <p className={`text-2xl font-semibold ${isProfit ? "text-green-600" : "text-red-600"}`}>
-          {formatCurrency(metrics.realizedPnl, currency)}
-        </p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Win rate</p>
-        <p className="text-2xl font-semibold">{formatPercent(metrics.winRate)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Expectancy</p>
-        <p className="text-2xl font-semibold">{formatCurrency(metrics.expectancy, currency)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Profit factor</p>
-        <p className="text-2xl font-semibold">{formatRatio(metrics.profitFactor)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Payoff ratio</p>
-        <p className="text-2xl font-semibold">{formatRatio(metrics.payoffRatio)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Avg. holding period</p>
-        <p className="text-2xl font-semibold">{(metrics.averageHoldingPeriodHours / 24).toFixed(1)}d</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Max drawdown</p>
-        <p className="text-2xl font-semibold">{formatPercent(metrics.maxDrawdown)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Cash drag</p>
-        <p className="text-2xl font-semibold">{formatPercent(cashDrag)}</p>
-      </div>
-      <div>
-        <p className="text-sm text-neutral-500">Dividend income</p>
-        <p className="text-2xl font-semibold">{formatCurrency(metrics.dividendIncome, currency)}</p>
-      </div>
+    <div className="grid grid-cols-2 divide-x divide-y divide-zinc-800 overflow-hidden rounded-lg border border-zinc-800 sm:grid-cols-3 sm:divide-y-0">
+      <Tile
+        label="Realized P/L"
+        value={formatCurrency(metrics.realizedPnl, currency)}
+        valueClassName={isProfit ? "text-emerald-400" : "text-rose-400"}
+      />
+      <Tile label="Win rate" value={formatPercent(metrics.winRate)} />
+      <Tile label="Expectancy" value={formatCurrency(metrics.expectancy, currency)} />
+      <Tile
+        label="Profit factor"
+        value={formatRatio(metrics.profitFactor)}
+        valueClassName={ratioColor(metrics.profitFactor)}
+      />
+      <Tile
+        label="Payoff ratio"
+        value={formatRatio(metrics.payoffRatio)}
+        valueClassName={ratioColor(metrics.payoffRatio)}
+      />
+      <Tile label="Avg. holding period" value={`${(metrics.averageHoldingPeriodHours / 24).toFixed(1)}d`} />
+      <Tile label="Max drawdown" value={formatPercent(metrics.maxDrawdown)} />
+      <Tile label="Cash drag" value={formatPercent(cashDrag)} />
+      <Tile label="Dividend income" value={formatCurrency(metrics.dividendIncome, currency)} />
     </div>
   );
 }
