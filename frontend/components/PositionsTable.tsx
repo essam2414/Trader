@@ -6,34 +6,48 @@ import type { Position } from "../lib/types";
 
 export function PositionsTable({ positions, currency }: { positions: Position[]; currency: string }) {
   if (positions.length === 0) {
-    return <p className="text-neutral-500">No open positions.</p>;
+    return <p className="text-sm text-zinc-500">No open positions.</p>;
   }
   return (
-    <table className="w-full text-left text-sm">
-      <thead>
-        <tr className="border-b border-neutral-200 text-neutral-500">
-          <th className="py-2">Ticker</th>
-          <th className="py-2">Quantity</th>
-          <th className="py-2">Avg. price</th>
-          <th className="py-2">Current price</th>
-          <th className="py-2">Value</th>
-          <th className="py-2">P/L</th>
-        </tr>
-      </thead>
-      <tbody>
-        {positions.map((position) => (
-          <tr key={position.ticker} className="border-b border-neutral-100">
-            <td className="py-2 font-medium">{position.ticker}</td>
-            <td className="py-2">{position.quantity}</td>
-            <td className="py-2">{formatCurrency(position.averagePricePaid, position.currency)}</td>
-            <td className="py-2">{formatCurrency(position.currentPrice, position.currency)}</td>
-            <td className="py-2">{formatCurrency(position.currentValue, currency)}</td>
-            <td className={`py-2 ${position.unrealizedProfitLoss >= 0 ? "text-green-600" : "text-red-600"}`}>
-              {formatCurrency(position.unrealizedProfitLoss, currency)}
-            </td>
+    <div className="overflow-hidden rounded-md border border-zinc-800">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-800 bg-zinc-950/40">
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Ticker</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Quantity</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Avg. price
+            </th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Current price
+            </th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Value</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">P/L</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-zinc-800/60">
+          {positions.map((position) => (
+            <tr key={position.ticker} className="transition-colors hover:bg-zinc-800/40">
+              <td className="px-4 py-3 font-medium text-zinc-100">{position.ticker}</td>
+              <td className="px-4 py-3 font-mono text-zinc-300">{position.quantity}</td>
+              <td className="px-4 py-3 font-mono text-zinc-300">
+                {formatCurrency(position.averagePricePaid, position.currency)}
+              </td>
+              <td className="px-4 py-3 font-mono text-zinc-300">
+                {formatCurrency(position.currentPrice, position.currency)}
+              </td>
+              <td className="px-4 py-3 font-mono text-zinc-300">
+                {formatCurrency(position.currentValue, currency)}
+              </td>
+              <td
+                className={`px-4 py-3 font-mono ${position.unrealizedProfitLoss >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+              >
+                {formatCurrency(position.unrealizedProfitLoss, currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

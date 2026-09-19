@@ -1,3 +1,10 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Subtle amber atmosphere glow behind the page header — restrained on
+   purpose, this is a data-dense dashboard, not a marketing page. */
+body {
+  background-image: radial-gradient(ellipse 70% 40% at 50% -10%, rgba(245, 158, 11, 0.07), transparent 70%);
+  background-attachment: fixed;
+}
