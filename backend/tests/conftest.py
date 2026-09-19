@@ -4,6 +4,7 @@ Sets required env vars before any app module is imported (so `app.config`
 can construct `Settings` without hitting real credentials), and provides
 the `db_session` fixture that DB-touching tests use.
 """
+
 import os
 
 os.environ.setdefault("TRADING212_API_KEY", "test-api-key")

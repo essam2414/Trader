@@ -1,6 +1,6 @@
-# Runs the backend and frontend test suites (plus a production build of the
-# frontend) on every push and on pull requests targeting main, so problems
-# surface before a merge rather than after.
+# Runs lint/format checks and the backend and frontend test suites (plus a
+# production build of the frontend) on every push and on pull requests
+# targeting main, so problems surface before a merge rather than after.
 name: CI
 
 on:
@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Lint (ruff check)
+        run: ruff check .
+
+      - name: Format check (ruff format)
+        run: ruff format --check .
+
       - name: Run tests
         run: python -m pytest -v
 
@@ -46,6 +52,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint (eslint)
+        run: npm run lint
 
       - name: Run tests
         run: npm run test

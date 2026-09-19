@@ -3,6 +3,7 @@
 Verifies that the require_api_key dependency correctly validates bearer tokens
 against the configured dashboard API key to gate access to protected routes.
 """
+
 import pytest
 from fastapi import HTTPException
 

@@ -4,6 +4,7 @@ This module defines the Settings class which loads configuration from environmen
 variables using Pydantic Settings. All required credentials and optional parameters
 are defined here for the Trading212 portfolio dashboard backend.
 """
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Env vars must be set (os.environ.setdefault) before importing app modules that
+# read them at import time via pydantic Settings - the import order here is deliberate.
+"tests/conftest.py" = ["E402"]

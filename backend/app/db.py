@@ -5,6 +5,7 @@ driven by `settings.database_url` (a local SQLite file by default, a
 Postgres/Supabase URL in production). `Base` is the declarative base that
 all ORM models (see `app/models.py`) inherit from.
 """
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 

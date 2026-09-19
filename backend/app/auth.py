@@ -6,6 +6,7 @@ dashboard deployed to a public URL, this simple bearer token approach (validated
 against settings.dashboard_api_key) is sufficient and intentionally simple —
 no JWT, no sessions, no per-user accounts.
 """
+
 from fastapi import Header, HTTPException
 
 from .config import settings
