@@ -1,6 +1,8 @@
 // Main dashboard Server Component: fetches live portfolio data from the backend API
 // server-side (so BACKEND_URL/DASHBOARD_API_KEY never reach the browser) and renders
 // the summary, equity curve, and positions table.
+export const dynamic = "force-dynamic";
+
 import { EquityCurveChart } from "../components/EquityCurveChart";
 import { PortfolioSummary } from "../components/PortfolioSummary";
 import { PositionsTable } from "../components/PositionsTable";
