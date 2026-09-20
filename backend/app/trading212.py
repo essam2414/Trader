@@ -10,7 +10,7 @@ import base64
 
 import httpx
 
-from .rate_limiter import RateLimiter
+from .rate_limiter import Trading212RateLimiter
 
 
 class Trading212Client:
@@ -26,7 +26,7 @@ class Trading212Client:
         api_key: str,
         api_secret: str,
         base_url: str,
-        rate_limiter: RateLimiter | None = None,
+        rate_limiter: Trading212RateLimiter | None = None,
     ):
         """Initialize the Trading212 client.
 
@@ -34,10 +34,10 @@ class Trading212Client:
             api_key: Trading212 API key (username for Basic auth)
             api_secret: Trading212 API secret (password for Basic auth)
             base_url: Base URL for the Trading212 API endpoints
-            rate_limiter: Optional shared RateLimiter, acquired before every
-                request so this client (and any others sharing the same
-                instance) never exceeds Trading212's documented request
-                limit. Omit only in tests that don't care about throttling.
+        rate_limiter: Optional shared Trading212RateLimiter, acquired before
+            every request so this client (and any others sharing the same
+            instance) follows Trading212's endpoint-specific request limits.
+            Omit only in tests that don't care about throttling.
         """
         credentials = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
         self._client = httpx.Client(
@@ -52,7 +52,7 @@ class Trading212Client:
             response = self._client.get(path, params=params or {})
             response.raise_for_status()
             return response
-        with self._rate_limiter:
+        with self._rate_limiter.limit(path):
             response = self._client.get(path, params=params or {})
             response.raise_for_status()
             return response

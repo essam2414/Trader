@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 import { EquityCurveChart } from "../components/EquityCurveChart";
 import { PerformanceMetrics } from "../components/PerformanceMetrics";
 import { PortfolioSummary } from "../components/PortfolioSummary";
+import { PortfolioAutoRefresh } from "../components/PortfolioAutoRefresh";
 import { PositionsTable } from "../components/PositionsTable";
 import { TickerPerformanceTable } from "../components/TickerPerformanceTable";
 import { TradeHistoryTable } from "../components/TradeHistoryTable";
@@ -23,10 +24,10 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto w-full max-w-[1360px] space-y-6 p-8 xl:p-10">
+      <PortfolioAutoRefresh />
       <header className="flex items-baseline gap-3">
         <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Portfolio dashboard</h1>
-        <span className="font-mono text-sm text-zinc-500">{current.account.currency}</span>
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Portfolio overview</h1>
       </header>
 
       <PortfolioSummary account={current.account} />

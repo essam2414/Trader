@@ -1,20 +1,17 @@
-"""Sliding-window rate limiter, used to keep calls to the Trading212 API
-under its documented request limit (6 requests per 60 seconds). Trading212
-also rejects genuinely *simultaneous* requests outright ("too many
-requests") independent of that count, so this limiter is a full
-serialization gate: `with limiter:` holds its lock for the caller's whole
-critical section (the HTTP call), not just its own bookkeeping, so two
-threads can never have a Trading212 request in flight at the same time.
+"""Trading212 request throttling.
 
-A single shared `trading212_rate_limiter` instance is used everywhere a
-Trading212Client is constructed (the live shared client in `main.py`'s
-lifespan, and each fresh client the scheduler builds per job run), so every
-code path that calls the Trading212 API coordinates against the same budget.
+Trading212 publishes separate quotas per endpoint. A shared
+``Trading212RateLimiter`` keeps those budgets independent while serializing
+all in-flight requests, because the API rejects genuinely simultaneous calls.
+It is shared by the live client and every scheduler client, so all code paths
+coordinate against the same per-endpoint allowance.
 """
 
 import threading
 import time
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Callable
 
 
@@ -58,4 +55,34 @@ class RateLimiter:
             self._calls.popleft()
 
 
-trading212_rate_limiter = RateLimiter(max_calls=6, period=60.0)
+class Trading212RateLimiter:
+    """Apply Trading212's documented limits independently per endpoint.
+
+    Requests remain globally serialized because Trading212 rejects simultaneous
+    requests. That serialization does not merge the endpoints' separate rate
+    budgets: a positions request does not consume an account-summary request.
+    """
+
+    def __init__(self, endpoint_limiters: dict[str, RateLimiter] | None = None):
+        self._endpoint_limiters = endpoint_limiters or {
+            "/equity/account/summary": RateLimiter(max_calls=1, period=5.0),
+            "/equity/positions": RateLimiter(max_calls=1, period=1.0),
+            "/equity/history/orders": RateLimiter(max_calls=6, period=60.0),
+            "/equity/history/dividends": RateLimiter(max_calls=6, period=60.0),
+        }
+        self._request_lock = threading.Lock()
+
+    @contextmanager
+    def limit(self, path: str) -> Iterator[None]:
+        """Reserve the rate budget for ``path`` and serialize its request."""
+        try:
+            endpoint_limiter = self._endpoint_limiters[path]
+        except KeyError as exc:
+            raise ValueError(f"No Trading212 rate limit configured for {path}") from exc
+
+        with self._request_lock:
+            with endpoint_limiter:
+                yield
+
+
+trading212_rate_limiter = Trading212RateLimiter()

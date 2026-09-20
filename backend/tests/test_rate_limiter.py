@@ -3,7 +3,7 @@
 import threading
 import time
 
-from app.rate_limiter import RateLimiter
+from app.rate_limiter import RateLimiter, Trading212RateLimiter
 
 
 def _fake_clock(start: float = 0.0):
@@ -95,3 +95,28 @@ def test_rate_limiter_serializes_concurrent_access():
         t.join()
 
     assert max_concurrent == 1
+
+
+def test_trading212_limiter_applies_account_summary_limit_independently():
+    time_func, advance = _fake_clock()
+    sleeps: list[float] = []
+
+    def sleep_func(seconds: float) -> None:
+        sleeps.append(seconds)
+        advance(seconds)
+
+    limiter = Trading212RateLimiter(
+        {
+            "/equity/account/summary": RateLimiter(1, 5.0, time_func, sleep_func),
+            "/equity/positions": RateLimiter(1, 1.0, time_func, sleep_func),
+        }
+    )
+
+    with limiter.limit("/equity/account/summary"):
+        pass
+    with limiter.limit("/equity/positions"):
+        pass
+    with limiter.limit("/equity/account/summary"):
+        pass
+
+    assert sleeps == [5.0]
