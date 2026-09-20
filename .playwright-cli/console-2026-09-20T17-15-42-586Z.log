@@ -14,3 +14,26 @@
 [  104450ms] [LOG] [HMR] connected @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
 [  104635ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:3000/api/auth/session:0
 [  104689ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:3000/api/auth/session:0
+[  347320ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  347751ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  352757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  357761ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  362757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  367758ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  372771ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  377751ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  382763ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  387753ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  392755ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  397757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  402761ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  407757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  412757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  417751ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  422753ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  427757ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  432761ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  437747ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  442753ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  447750ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
+[  452756ms] [LOG] [Fast Refresh] done in 193666ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_1e8vcs8._.js:776
