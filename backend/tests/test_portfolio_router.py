@@ -58,6 +58,23 @@ def test_get_current_portfolio_returns_account_and_positions(client):
     assert body["positions"][0]["unrealizedProfitLoss"] == 147.0
 
 
+def test_get_current_portfolio_reuses_a_recent_live_response(client):
+    """A second dashboard render within Trading212's five-second window is immediate."""
+    fake_client = MagicMock()
+    fake_client.get_account_summary.return_value = FAKE_SUMMARY
+    fake_client.get_positions.return_value = FAKE_POSITIONS
+    app.dependency_overrides[get_trading212_client] = lambda: fake_client
+
+    first = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+    second = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+
+    del app.dependency_overrides[get_trading212_client]
+    assert first.status_code == 200
+    assert second.status_code == 200
+    fake_client.get_account_summary.assert_called_once()
+    fake_client.get_positions.assert_called_once()
+
+
 def test_get_current_portfolio_returns_502_when_trading212_unreachable(client):
     """If the Trading212 client fails (bad credentials, network error), the endpoint
     should translate that into a 502 with a clear message, not leak a raw 500."""

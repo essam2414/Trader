@@ -92,3 +92,46 @@ class PortfolioMetricsOut(BaseModel):
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]
     trades: list[TradeOut]
+
+
+class WatchlistSearchResult(BaseModel):
+    assetId: str
+    symbol: str
+    name: str
+    exchange: str
+
+
+class WatchlistAdd(BaseModel):
+    assetId: str
+
+
+class WatchlistOrderUpdate(BaseModel):
+    assetIds: list[str]
+
+
+class SparklinePoint(BaseModel):
+    timestamp: datetime
+    close: float
+
+
+class WatchlistQuoteOut(BaseModel):
+    price: float | None
+    previousClose: float | None
+    dollarChange: float | None
+    percentChange: float | None
+    sparkline: list[SparklinePoint]
+    feed: str
+    sourceTimestamp: datetime | None
+    sourceType: str | None
+    freshness: str
+    isExtendedHours: bool
+
+
+class WatchlistEntryOut(BaseModel):
+    assetId: str
+    symbol: str
+    name: str
+    exchange: str
+    sortOrder: int
+    addedAt: datetime
+    quote: WatchlistQuoteOut

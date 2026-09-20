@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -60,3 +60,20 @@ class Dividend(Base):
     currency: Mapped[str] = mapped_column(String(3))
     type: Mapped[str] = mapped_column(String)
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WatchlistEntry(Base):
+    """A locally persisted, read-only reference to an Alpaca US equity."""
+
+    __tablename__ = "watchlist_entries"
+    __table_args__ = (UniqueConstraint("alpaca_asset_id", name="uq_watchlist_entries_alpaca_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(32), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )

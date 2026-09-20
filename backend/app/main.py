@@ -11,11 +11,14 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
+from .alpaca_market_data import AlpacaMarketDataClient
 from .config import settings
 from .db import Base, engine
 from .rate_limiter import trading212_rate_limiter
 from .routers.portfolio import router as portfolio_router
+from .routers.watchlist import router as watchlist_router
 from .scheduler import run_history_sync_job, run_snapshot_job
+from .services.portfolio_current import PortfolioCurrentCache
 from .trading212 import Trading212Client
 
 
@@ -31,6 +34,12 @@ async def lifespan(app: FastAPI):
         base_url=settings.trading212_base_url,
         rate_limiter=trading212_rate_limiter,
     )
+    app.state.portfolio_current_cache = PortfolioCurrentCache()
+    app.state.alpaca_market_data_client = (
+        AlpacaMarketDataClient(settings.alpaca_api_key, settings.alpaca_api_secret, settings.alpaca_data_feed)
+        if settings.alpaca_api_key and settings.alpaca_api_secret
+        else None
+    )
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_snapshot_job, "interval", minutes=settings.snapshot_interval_minutes)
     scheduler.add_job(run_history_sync_job, "interval", minutes=settings.history_sync_interval_minutes)
@@ -42,6 +51,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Trader API", lifespan=lifespan)
 app.include_router(portfolio_router, prefix="/api")
+app.include_router(watchlist_router, prefix="/api")
 
 
 @app.get("/health")

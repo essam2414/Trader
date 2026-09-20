@@ -82,3 +82,40 @@ export interface PortfolioMetrics {
   dividendIncomeByTicker: Record<string, number>;
   trades: Trade[];
 }
+
+export interface WatchlistSearchResult {
+  assetId: string;
+  symbol: string;
+  name: string;
+  exchange: string;
+}
+
+export interface SparklinePoint {
+  timestamp: string;
+  close: number;
+}
+
+export type QuoteFreshness = "fresh" | "stale" | "unavailable";
+
+export interface WatchlistQuote {
+  price: number | null;
+  previousClose: number | null;
+  dollarChange: number | null;
+  percentChange: number | null;
+  sparkline: SparklinePoint[];
+  feed: string;
+  sourceTimestamp: string | null;
+  sourceType: string | null;
+  freshness: QuoteFreshness;
+  isExtendedHours: boolean;
+}
+
+export interface WatchlistEntry {
+  assetId: string;
+  symbol: string;
+  name: string;
+  exchange: string;
+  sortOrder: number;
+  addedAt: string;
+  quote: WatchlistQuote;
+}
