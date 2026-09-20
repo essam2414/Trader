@@ -1,0 +1,125 @@
+import type { DragEvent } from "react";
+import { formatWatchlistPrice } from "../lib/format";
+import type { WatchlistEntry } from "../lib/types";
+import { WatchlistSparkline, type WatchlistTrend } from "./WatchlistSparkline";
+
+export type WatchlistMode = "default" | "move" | "delete";
+
+interface WatchlistItemProps {
+  entry: WatchlistEntry;
+  mode: WatchlistMode;
+  isDragging: boolean;
+  isSavingOrder: boolean;
+  onDragStart: (event: DragEvent<HTMLDivElement>, assetId: string) => void;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (assetId: string) => void;
+  onDragEnd: () => void;
+  onRemove: (assetId: string) => void;
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function displayName(name: string): string {
+  return name
+    .replaceAll(",", "")
+    .replace(/\s+(?:Class|Series)\s+[A-Z0-9]+(?:\s+(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?))?$/i, "")
+    .replace(/\s+(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?)$/i, "")
+    .replace(/\s+Holdings?(?:\s+Co(?:mpany)?\.?)?$/i, "")
+    .replace(/\s+(?:Incorporated|Inc\.?|Corporation|Corp\.?|Ltd\.?|PLC)$/i, "")
+    .trim() || name;
+}
+
+function trendFor(entry: WatchlistEntry): WatchlistTrend {
+  const change = entry.quote.percentChange ?? entry.quote.dollarChange;
+  if (change === null || change === 0) return "neutral";
+  return change > 0 ? "positive" : "negative";
+}
+
+function StockLogo({ name }: Pick<WatchlistEntry, "name">) {
+  // The watchlist API currently has no logo URL. Keep this as a rounded-square
+  // fallback so a real logo can be inserted here when the API provides one.
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[#1b2227] text-xs font-bold tracking-tight text-neutral-100"
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+export function WatchlistItem({
+  entry,
+  mode,
+  isDragging,
+  isSavingOrder,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  onRemove,
+}: WatchlistItemProps) {
+  const trend = trendFor(entry);
+  const percentChange = entry.quote.percentChange;
+  const changeClass = trend === "positive" ? "text-[#32e64d]" : trend === "negative" ? "text-[#ff3b45]" : "text-[#8a9298]";
+  const changeIndicator = trend === "positive" ? "↗" : trend === "negative" ? "↘" : "–";
+  const interactiveClass = mode === "move"
+    ? "cursor-grab active:cursor-grabbing"
+    : mode === "delete"
+      ? "cursor-pointer hover:bg-rose-400/[0.07] focus-visible:bg-rose-400/[0.07]"
+      : "hover:bg-white/[0.025]";
+
+  return (
+    <div
+      draggable={mode === "move" && !isSavingOrder}
+      onDragStart={(event) => onDragStart(event, entry.assetId)}
+      onDragOver={onDragOver}
+      onDrop={() => onDrop(entry.assetId)}
+      onDragEnd={onDragEnd}
+      onClick={() => {
+        if (mode === "delete") onRemove(entry.assetId);
+      }}
+      onKeyDown={(event) => {
+        if (mode === "delete" && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onRemove(entry.assetId);
+        }
+      }}
+      role={mode === "delete" ? "button" : undefined}
+      aria-label={mode === "delete" ? `Remove ${entry.symbol}` : undefined}
+      tabIndex={mode === "delete" ? 0 : undefined}
+      className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_80px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "opacity-40" : ""}`}
+    >
+      {mode === "move" && <span aria-hidden="true" className="absolute left-1 top-1/2 -translate-y-1/2 text-xs tracking-[-0.2em] text-neutral-600">⋮⋮</span>}
+      <StockLogo name={entry.name} />
+      <div className="min-w-0">
+        <p className="truncate text-[15px] font-semibold leading-tight text-[#f5f5f5] sm:text-[16px]">
+          {displayName(entry.name)}
+        </p>
+        <p className="mt-0.5 truncate text-[13px] font-medium leading-none text-[#8a9298]">
+          {entry.symbol}
+        </p>
+      </div>
+      <div className="justify-self-end">
+        <WatchlistSparkline points={entry.quote.sparkline} trend={trend} />
+      </div>
+      <div className="min-w-0 text-right font-sans [font-variant-numeric:tabular-nums]">
+        <p className="truncate text-[16px] font-semibold leading-tight text-[#f5f5f5] sm:text-[17px]">
+          {entry.quote.price === null ? "—" : formatWatchlistPrice(entry.quote.price)}
+        </p>
+        <p className={`mt-0.5 truncate text-[13px] font-semibold leading-none sm:text-[14px] ${changeClass}`}>
+          {percentChange === null ? "—" : `${changeIndicator} ${Math.abs(percentChange).toFixed(2)}%`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export { displayName as conciseStockName };

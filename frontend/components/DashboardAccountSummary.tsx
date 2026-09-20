@@ -3,22 +3,24 @@ import { formatCurrency } from "../lib/format";
 
 export async function DashboardAccountSummary() {
   const { account } = await getPortfolioCurrent();
-  const isUnrealizedProfit = account.unrealizedProfitLoss >= 0;
+  const unrealizedClassName = account.unrealizedProfitLoss > 0
+    ? "text-emerald-400"
+    : account.unrealizedProfitLoss < 0
+      ? "text-rose-400"
+      : "text-neutral-100";
 
   return (
-    <section className="grid grid-cols-2 gap-5" aria-label="Account overview">
-      <article className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 shadow-lg shadow-black/10">
+    <section className="flex h-[72px] items-start gap-10 sm:gap-14" aria-label="Account overview">
+      <article className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Total account value</p>
-        <p className="mt-2 font-mono text-4xl font-semibold tracking-tight text-neutral-100">
+        <p className="mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight text-neutral-100 [font-variant-numeric:tabular-nums]">
           {formatCurrency(account.totalValue, account.currency)}
         </p>
       </article>
-      <article className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 shadow-lg shadow-black/10">
+      <article className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Unrealised P/L</p>
         <p
-          className={`mt-2 font-mono text-4xl font-semibold tracking-tight ${
-            isUnrealizedProfit ? "text-emerald-400" : "text-rose-400"
-          }`}
+          className={`mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight [font-variant-numeric:tabular-nums] ${unrealizedClassName}`}
         >
           {formatCurrency(account.unrealizedProfitLoss, account.currency)}
         </p>
@@ -29,11 +31,11 @@ export async function DashboardAccountSummary() {
 
 export function DashboardAccountSummarySkeleton() {
   return (
-    <section className="grid grid-cols-2 gap-5" aria-busy="true" aria-label="Loading account overview">
+    <section className="flex h-[72px] items-start gap-10 sm:gap-14" aria-busy="true" aria-label="Loading account overview">
       {["Total account value", "Unrealised P/L"].map((label) => (
-        <article key={label} className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 shadow-lg shadow-black/10">
+        <article key={label} className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">{label}</p>
-          <div className="mt-3 h-10 w-48 animate-pulse rounded bg-neutral-800" />
+          <div className="mt-2 h-9 w-40 animate-pulse rounded bg-neutral-800" />
         </article>
       ))}
       <span className="sr-only" role="status">Loading account overview</span>
