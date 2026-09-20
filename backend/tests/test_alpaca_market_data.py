@@ -3,6 +3,8 @@
 from datetime import datetime
 from decimal import Decimal
 
+import httpx
+
 from app.alpaca_market_data import AlpacaMarketDataClient
 
 
@@ -111,6 +113,26 @@ def test_symbol_search_prioritizes_exact_and_prefix_ticker_matches(monkeypatch):
     )
 
     assert [asset.symbol for asset in client.search_us_equities("aapl")] == ["AAPL", "AAPLX", "ZZZZ"]
+
+
+def test_company_logo_uses_the_ticker_logo_provider_without_credentials(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret")
+    request_details = {}
+
+    def fake_get(url, *, headers, timeout):
+        request_details.update(url=url, headers=headers, timeout=timeout)
+        return httpx.Response(
+            200,
+            content=b"png-logo",
+            headers={"content-type": "image/png; charset=binary"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("app.alpaca_market_data.httpx.get", fake_get)
+
+    assert client.get_company_logo("AAPL") == (b"png-logo", "image/png")
+    assert request_details["url"] == "https://api.eulerpool.com/api/1/logo/ticker/AAPL"
+    assert request_details["headers"] == {"Accept": "image/*"}
 
 
 def client_asset(asset_id: str, symbol: str, name: str, exchange: str):

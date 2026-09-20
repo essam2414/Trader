@@ -134,4 +134,5 @@ class WatchlistEntryOut(BaseModel):
     exchange: str
     sortOrder: int
     addedAt: datetime
+    logoUrl: str
     quote: WatchlistQuoteOut

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -74,6 +74,10 @@ class WatchlistEntry(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     exchange: Mapped[str] = mapped_column(String(32), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    logo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    logo_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    logo_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

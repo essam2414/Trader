@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func
 
 from app.alpaca_market_data import AlpacaMarketDataClient, MarketQuote
@@ -10,6 +12,10 @@ from app.models import WatchlistEntry
 
 class WatchlistLimitError(ValueError):
     """Raised when adding an entry would exceed the configured limit."""
+
+
+LOGO_RECHECK_INTERVAL = timedelta(days=7)
+LOGO_PROVIDER = "eulerpool"
 
 
 def add_entry(session, client: AlpacaMarketDataClient, asset_id: str, limit: int) -> WatchlistEntry:
@@ -67,6 +73,38 @@ def refresh_metadata(session, client: AlpacaMarketDataClient, entries: list[Watc
             changed = True
     if changed:
         session.commit()
+
+
+def get_cached_logo(
+    session, client: AlpacaMarketDataClient, entry: WatchlistEntry
+) -> tuple[bytes, str] | None:
+    """Return the persisted logo, fetching it once from Alpaca when needed.
+
+    Failed lookups are recorded too, avoiding a provider call for every page refresh
+    when an asset does not have a logo in Alpaca's catalogue.
+    """
+    if entry.logo_data and entry.logo_content_type:
+        return entry.logo_data, entry.logo_content_type
+
+    now = datetime.now(timezone.utc)
+    if (
+        entry.logo_provider == LOGO_PROVIDER
+        and entry.logo_checked_at
+        and now - entry.logo_checked_at <= LOGO_RECHECK_INTERVAL
+    ):
+        return None
+
+    entry.logo_provider = LOGO_PROVIDER
+    entry.logo_checked_at = now
+    try:
+        logo = client.get_company_logo(entry.symbol)
+    except Exception:
+        session.commit()
+        return None
+    if logo is not None:
+        entry.logo_data, entry.logo_content_type = logo
+    session.commit()
+    return logo
 
 
 def unavailable_quote(feed: str) -> MarketQuote:

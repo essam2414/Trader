@@ -1,6 +1,6 @@
 """Read-only user watchlist routes backed by Alpaca market data."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..alpaca_market_data import AlpacaMarketDataClient
@@ -19,6 +19,7 @@ from ..schemas import (
 from ..services.watchlist import (
     WatchlistLimitError,
     add_entry,
+    get_cached_logo,
     refresh_metadata,
     remove_entry,
     reorder_entries,
@@ -26,6 +27,11 @@ from ..services.watchlist import (
 )
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
+
+
+def logo_url(asset_id: str, checked_at) -> str:
+    url = f"/api/watchlist/{asset_id}/logo"
+    return f"{url}?v={int(checked_at.timestamp())}" if checked_at else url
 
 
 def require_alpaca(client: AlpacaMarketDataClient | None) -> AlpacaMarketDataClient:
@@ -90,6 +96,7 @@ def get_watchlist(
                 exchange=entry.exchange,
                 sortOrder=entry.sort_order,
                 addedAt=entry.added_at,
+                logoUrl=logo_url(entry.alpaca_asset_id, entry.logo_checked_at),
                 quote=quote_out(quotes.get(entry.symbol), market_data.feed),
             )
         )
@@ -117,6 +124,7 @@ def add_watchlist_entry(
         exchange=entry.exchange,
         sortOrder=entry.sort_order,
         addedAt=entry.added_at,
+        logoUrl=logo_url(entry.alpaca_asset_id, entry.logo_checked_at),
         quote=WatchlistQuoteOut(
             price=None,
             previousClose=None,
@@ -129,6 +137,26 @@ def add_watchlist_entry(
             freshness="unavailable",
             isExtendedHours=False,
         ),
+    )
+
+
+@router.get("/watchlist/{asset_id}/logo")
+def get_watchlist_logo(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
+) -> Response:
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    logo = get_cached_logo(db, require_alpaca(client), entry)
+    if logo is None:
+        raise HTTPException(status_code=404, detail="Company logo is unavailable")
+    logo_data, content_type = logo
+    return Response(
+        content=logo_data,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=604800, immutable"},
     )
 
 

@@ -5,7 +5,13 @@ from sqlalchemy.exc import IntegrityError
 
 from app.alpaca_market_data import AlpacaAsset
 from app.models import WatchlistEntry
-from app.services.watchlist import WatchlistLimitError, add_entry, remove_entry, reorder_entries
+from app.services.watchlist import (
+    WatchlistLimitError,
+    add_entry,
+    get_cached_logo,
+    remove_entry,
+    reorder_entries,
+)
 
 
 class FakeAlpacaClient:
@@ -14,6 +20,11 @@ class FakeAlpacaClient:
 
     def get_asset(self, asset_id: str):
         return self.asset if asset_id == self.asset.asset_id else None
+
+    def get_company_logo(self, symbol: str):
+        assert symbol == self.asset.symbol
+        self.logo_requests = getattr(self, "logo_requests", 0) + 1
+        return b"png-logo", "image/png"
 
 
 def test_add_revalidates_asset_and_is_idempotent(db_session):
@@ -78,3 +89,17 @@ def test_reorder_persists_a_complete_watchlist_order(db_session):
         for entry in db_session.query(WatchlistEntry).order_by(WatchlistEntry.sort_order).all()
     ] == ["asset-msft", "asset-aapl"]
     assert reorder_entries(db_session, ["asset-aapl"]) is False
+
+
+def test_company_logo_is_cached_in_the_watchlist_entry(db_session):
+    client = FakeAlpacaClient()
+    entry = add_entry(db_session, client, "asset-aapl", limit=2)
+
+    assert get_cached_logo(db_session, client, entry) == (b"png-logo", "image/png")
+    db_session.refresh(entry)
+    assert entry.logo_data == b"png-logo"
+    assert entry.logo_content_type == "image/png"
+    assert entry.logo_provider == "eulerpool"
+
+    assert get_cached_logo(db_session, client, entry) == (b"png-logo", "image/png")
+    assert client.logo_requests == 1

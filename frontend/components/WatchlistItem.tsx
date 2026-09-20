@@ -1,4 +1,4 @@
-import type { DragEvent } from "react";
+import { useState, type DragEvent } from "react";
 import { formatWatchlistPrice } from "../lib/format";
 import type { WatchlistEntry } from "../lib/types";
 import { WatchlistSparkline, type WatchlistTrend } from "./WatchlistSparkline";
@@ -42,15 +42,30 @@ function trendFor(entry: WatchlistEntry): WatchlistTrend {
   return change > 0 ? "positive" : "negative";
 }
 
-function StockLogo({ name }: Pick<WatchlistEntry, "name">) {
-  // The watchlist API currently has no logo URL. Keep this as a rounded-square
-  // fallback so a real logo can be inserted here when the API provides one.
+function CachedLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">) {
+  const [failedToLoad, setFailedToLoad] = useState(false);
+
+  if (failedToLoad) return null;
+
+  return (
+    // This authenticated, cached image route cannot be fetched by Next's unauthenticated optimizer.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      alt={`${name} logo`}
+      className="absolute inset-0 h-full w-full bg-white object-contain p-1"
+      src={logoUrl}
+      onError={() => setFailedToLoad(true)}
+    />
+  );
+}
+
+function StockLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">) {
   return (
     <span
-      aria-hidden="true"
-      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[#1b2227] text-xs font-bold tracking-tight text-neutral-100"
-    >
-      {initials(name)}
+      className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#1b2227] text-xs font-bold tracking-tight text-neutral-100"
+      >
+        <span aria-hidden="true">{initials(name)}</span>
+      <CachedLogo key={logoUrl} name={name} logoUrl={logoUrl} />
     </span>
   );
 }
@@ -74,7 +89,7 @@ export function WatchlistItem({
     ? "cursor-grab active:cursor-grabbing"
     : mode === "delete"
       ? "cursor-pointer hover:bg-rose-400/[0.07] focus-visible:bg-rose-400/[0.07]"
-      : "hover:bg-white/[0.025]";
+      : "cursor-default hover:bg-neutral-800/40 focus-visible:bg-neutral-800/40";
 
   return (
     <div
@@ -98,7 +113,7 @@ export function WatchlistItem({
       className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_80px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "opacity-40" : ""}`}
     >
       {mode === "move" && <span aria-hidden="true" className="absolute left-1 top-1/2 -translate-y-1/2 text-xs tracking-[-0.2em] text-neutral-600">⋮⋮</span>}
-      <StockLogo name={entry.name} />
+      <StockLogo name={entry.name} logoUrl={entry.logoUrl} />
       <div className="min-w-0">
         <p className="truncate text-[15px] font-semibold leading-tight text-[#f5f5f5] sm:text-[16px]">
           {displayName(entry.name)}

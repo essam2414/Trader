@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -14,6 +15,7 @@ import httpx
 NEW_YORK = ZoneInfo("America/New_York")
 DATA_BASE_URL = "https://data.alpaca.markets"
 TRADING_BASE_URL = "https://paper-api.alpaca.markets"
+TICKER_LOGO_BASE_URL = "https://api.eulerpool.com/api/1/logo/ticker"
 CATALOG_TTL_SECONDS = 24 * 60 * 60
 QUOTE_TTL_SECONDS = 60
 FRESH_AFTER_SECONDS = 5 * 60
@@ -134,6 +136,35 @@ class AlpacaMarketDataClient:
             if asset.asset_id == asset_id:
                 return asset
         return None
+
+    def get_company_logo(self, symbol: str) -> tuple[bytes, str] | None:
+        """Fetch a company logo from the configured no-key ticker-logo provider."""
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = httpx.get(
+                    f"{TICKER_LOGO_BASE_URL}/{quote(symbol, safe='')}",
+                    headers={"Accept": "image/*"},
+                    timeout=10.0,
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429 or response.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        "Transient Alpaca response", request=response.request, response=response
+                    )
+                if response.status_code >= 400:
+                    return None
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
+                if not content_type.startswith("image/") or not response.content:
+                    return None
+                return response.content, content_type
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.2 * (2**attempt))
+        raise AlpacaUnavailableError("Company logos are temporarily unavailable") from last_error
 
     def _load_calendar(self, around: date) -> dict[date, TradingSession]:
         if self._calendar_loaded_for == around:

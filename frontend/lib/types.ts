@@ -117,5 +117,6 @@ export interface WatchlistEntry {
   exchange: string;
   sortOrder: number;
   addedAt: string;
+  logoUrl: string;
   quote: WatchlistQuote;
 }

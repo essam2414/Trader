@@ -1,8 +1,97 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WatchlistItem } from "../WatchlistItem";
 
 describe("WatchlistItem", () => {
+  it("visibly shades a default item while it is hovered", () => {
+    const { container } = render(
+      <WatchlistItem
+        entry={{
+          assetId: "asset-1",
+          symbol: "VRT",
+          name: "Vertiv Holdings Co Class A Common Stock",
+          exchange: "NYSE",
+          sortOrder: 0,
+          addedAt: "2026-09-18T13:30:00Z",
+          logoUrl: "/api/watchlist/asset-1/logo",
+          quote: {
+            price: null,
+            previousClose: null,
+            dollarChange: null,
+            percentChange: null,
+            sparkline: [],
+            feed: "iex",
+            sourceTimestamp: null,
+            sourceType: null,
+            freshness: "unavailable",
+            isExtendedHours: false,
+          },
+        }}
+        mode="default"
+        isDragging={false}
+        isSavingOrder={false}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onDragEnd={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(container.firstChild).toHaveClass("hover:bg-neutral-800/40");
+    expect(screen.getByRole("img", { name: "Vertiv Holdings Co Class A Common Stock logo" })).toHaveAttribute(
+      "src",
+      "/api/watchlist/asset-1/logo",
+    );
+  });
+
+  it("retries a logo when the cache version changes after an earlier load failure", () => {
+    const entry = {
+      assetId: "asset-1",
+      symbol: "VRT",
+      name: "Vertiv Holdings Co Class A Common Stock",
+      exchange: "NYSE",
+      sortOrder: 0,
+      addedAt: "2026-09-18T13:30:00Z",
+      logoUrl: "/api/watchlist/asset-1/logo",
+      quote: {
+        price: null,
+        previousClose: null,
+        dollarChange: null,
+        percentChange: null,
+        sparkline: [],
+        feed: "iex",
+        sourceTimestamp: null,
+        sourceType: null,
+        freshness: "unavailable" as const,
+        isExtendedHours: false,
+      },
+    };
+    const props = {
+      mode: "default" as const,
+      isDragging: false,
+      isSavingOrder: false,
+      onDragStart: vi.fn(),
+      onDragOver: vi.fn(),
+      onDrop: vi.fn(),
+      onDragEnd: vi.fn(),
+      onRemove: vi.fn(),
+    };
+    const { rerender } = render(<WatchlistItem entry={entry} {...props} />);
+
+    fireEvent.error(screen.getByRole("img", { name: "Vertiv Holdings Co Class A Common Stock logo" }));
+    expect(screen.queryByRole("img", { name: "Vertiv Holdings Co Class A Common Stock logo" })).not.toBeInTheDocument();
+
+    rerender(
+      <WatchlistItem entry={{ ...entry, logoUrl: `${entry.logoUrl}?v=1` }} {...props} />,
+    );
+
+    expect(screen.getByRole("img", { name: "Vertiv Holdings Co Class A Common Stock logo" })).toHaveAttribute(
+      "src",
+      "/api/watchlist/asset-1/logo?v=1",
+    );
+  });
+
   it("uses an unsigned percentage beside a downward indicator", () => {
     render(
       <WatchlistItem
@@ -13,6 +102,7 @@ describe("WatchlistItem", () => {
           exchange: "NYSE",
           sortOrder: 0,
           addedAt: "2026-09-18T13:30:00Z",
+          logoUrl: "/api/watchlist/asset-1/logo",
           quote: {
             price: 249.22,
             previousClose: 250.42,

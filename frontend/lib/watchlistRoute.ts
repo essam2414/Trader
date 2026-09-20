@@ -20,3 +20,22 @@ export async function watchlistBackendRequest(path: string, init: RequestInit = 
     return NextResponse.json({ message: "Watchlist service is unavailable" }, { status: 502 });
   }
 }
+
+export async function watchlistLogoBackendRequest(path: string): Promise<NextResponse> {
+  const token = (await cookies()).get(AUTH_COOKIE)?.value;
+  if (!(await isAuthenticated(token))) {
+    return new NextResponse(null, { status: 401 });
+  }
+
+  try {
+    const response = await backendRequest(path);
+    const headers = new Headers();
+    const contentType = response.headers.get("content-type");
+    const cacheControl = response.headers.get("cache-control");
+    if (contentType) headers.set("Content-Type", contentType);
+    if (cacheControl) headers.set("Cache-Control", cacheControl);
+    return new NextResponse(response.body, { status: response.status, headers });
+  } catch {
+    return new NextResponse(null, { status: 502 });
+  }
+}

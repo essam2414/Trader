@@ -37,6 +37,7 @@ describe("WatchlistSection search", () => {
             exchange: "NASDAQ",
             sortOrder: 0,
             addedAt: "2026-09-18T13:30:00Z",
+            logoUrl: "/api/watchlist/asset-1/logo",
             quote: {
               price: 136.01,
               previousClose: 135.47,
