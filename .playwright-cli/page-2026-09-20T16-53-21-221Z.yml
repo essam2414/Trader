@@ -1,0 +1,14 @@
+- generic [ref=f2e1]:
+  - main [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - paragraph [ref=f2e4]: Invest
+      - heading "Welcome back" [level=1] [ref=f2e5]
+      - paragraph [ref=f2e6]: Enter your four-digit PIN to access your account.
+      - generic [ref=f2e7]:
+        - generic [ref=f2e8]:
+          - generic [ref=f2e9]: PIN
+          - textbox "PIN" [active] [ref=f2e10]:
+            - /placeholder: ••••
+        - button "Sign in" [disabled] [ref=f2e11]
+  - button "Open Next.js Dev Tools" [ref=f2e17] [cursor=pointer]
+  - alert [ref=f2e21]

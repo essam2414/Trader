@@ -1,13 +1,13 @@
 // Root layout that wraps every page in the application. Loads the dashboard's
-// two fonts (Manrope for UI text, JetBrains Mono for tabular financial
-// figures) and applies the dark theme base to <body>.
+// two fonts (Inter for UI text, Roboto Mono for tabular financial figures)
+// and applies the minimal dark theme base to <body>.
 import type { Metadata } from "next";
-import { JetBrains_Mono, Manrope } from "next/font/google";
-import { Sidebar } from "../components/Sidebar";
+import { Inter, Roboto_Mono } from "next/font/google";
+import { AppShell } from "../components/AppShell";
 import "./globals.css";
 
-const manrope = Manrope({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
-const jetbrainsMono = JetBrains_Mono({
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
+const robotoMono = Roboto_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
   variable: "--font-mono",
@@ -21,12 +21,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${manrope.variable} ${jetbrainsMono.variable}`}>
-      <body className="min-h-screen bg-zinc-950 font-sans text-zinc-100 antialiased">
-        <div className="mx-auto grid min-h-screen w-full min-w-[1024px] max-w-[1680px] grid-cols-[14.5rem_minmax(0,1fr)] border-x border-zinc-900 bg-zinc-950 shadow-2xl shadow-black/20">
-          <Sidebar />
-          <div className="min-w-0">{children}</div>
-        </div>
+    <html lang="en" className={`${inter.variable} ${robotoMono.variable}`}>
+      <body className="min-h-screen bg-neutral-950 font-sans text-neutral-100 antialiased">
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

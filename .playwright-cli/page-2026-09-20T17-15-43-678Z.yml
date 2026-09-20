@@ -1,0 +1,12 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - heading "Trader" [level=1] [ref=e4]
+      - paragraph [ref=e5]: Enter your four-digit PIN to access your account.
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: PIN
+          - textbox "PIN" [active] [ref=e9]:
+            - /placeholder: ••••
+        - button "Sign in" [disabled] [ref=e10]
+  - button "Open Next.js Dev Tools" [ref=e16] [cursor=pointer]

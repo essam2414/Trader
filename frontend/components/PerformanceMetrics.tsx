@@ -22,14 +22,14 @@ function formatRatio(value: number | null): string {
 }
 
 function ratioColor(value: number | null): string {
-  if (value === null) return "text-zinc-100";
+  if (value === null) return "text-neutral-100";
   return value >= 1 ? "text-emerald-400" : "text-rose-400";
 }
 
-function Tile({ label, value, valueClassName = "text-zinc-100" }: { label: string; value: string; valueClassName?: string }) {
+function Tile({ label, value, valueClassName = "text-neutral-100" }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div className="p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</p>
       <p className={`mt-1 font-mono text-2xl font-semibold ${valueClassName}`}>{value}</p>
     </div>
   );
@@ -46,7 +46,7 @@ export function PerformanceMetrics({
 }) {
   const isProfit = metrics.realizedPnl >= 0;
   return (
-    <div className="grid grid-cols-2 divide-x divide-y divide-zinc-800 overflow-hidden rounded-lg border border-zinc-800 sm:grid-cols-3 sm:divide-y-0">
+    <div className="grid grid-cols-2 divide-x divide-y divide-neutral-800 overflow-hidden rounded-lg border border-neutral-800 sm:grid-cols-3 sm:divide-y-0">
       <Tile
         label="Realized P/L"
         value={formatCurrency(metrics.realizedPnl, currency)}

@@ -17,23 +17,23 @@ export default function DashboardError({
     <main className="mx-auto max-w-2xl space-y-4 p-8 text-center">
       <h1 className="text-2xl font-bold">Couldn&apos;t load your portfolio</h1>
       {isTrading212Unreachable ? (
-        <p className="text-neutral-600">
+        <p className="text-neutral-400">
           The backend couldn&apos;t connect to Trading212. Check that{" "}
-          <code className="rounded bg-neutral-100 px-1">TRADING212_API_KEY</code> and{" "}
-          <code className="rounded bg-neutral-100 px-1">TRADING212_API_SECRET</code> in{" "}
-          <code className="rounded bg-neutral-100 px-1">backend/.env</code> are set to real,
+          <code className="rounded bg-neutral-900 px-1 text-neutral-100">TRADING212_API_KEY</code> and{" "}
+          <code className="rounded bg-neutral-900 px-1 text-neutral-100">TRADING212_API_SECRET</code> in{" "}
+          <code className="rounded bg-neutral-900 px-1 text-neutral-100">backend/.env</code> are set to real,
           valid Trading212 API credentials.
         </p>
       ) : (
-        <p className="text-neutral-600">
+        <p className="text-neutral-400">
           Something went wrong loading your data. Make sure the backend server is running and
           reachable at the configured{" "}
-          <code className="rounded bg-neutral-100 px-1">BACKEND_URL</code>.
+          <code className="rounded bg-neutral-900 px-1 text-neutral-100">BACKEND_URL</code>.
         </p>
       )}
       <button
         onClick={() => reset()}
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+        className="rounded-md bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-neutral-300"
       >
         Try again
       </button>
