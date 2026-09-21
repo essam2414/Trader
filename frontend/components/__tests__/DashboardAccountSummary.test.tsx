@@ -9,6 +9,7 @@ vi.mock("../../lib/api", () => ({
     account: {
       totalValue: 1381.17,
       unrealizedProfitLoss: 0,
+      weeklyRealizedProfitLoss: 25,
       currency: "GBP",
     },
   }),
@@ -50,13 +51,27 @@ describe("DashboardAccountSummary", () => {
     expect(screen.getByText(/12/)).toHaveClass("text-[#ff3b45]");
   });
 
+  it("shows this week's realised P/L beside unrealised P/L", async () => {
+    render(await DashboardAccountSummary());
+
+    expect(screen.getByText("Weekly gain")).toBeInTheDocument();
+    expect(screen.getByText(/25\.00/)).toHaveClass("text-[#32e64d]");
+  });
+
+  it("shows an unsigned weekly loss while retaining its loss colour", () => {
+    render(<LiveDashboardAccountSummary initialAccount={accountWithUnrealizedPnl(0, 1000, -25)} />);
+
+    expect(screen.getByText("£25.00")).toHaveClass("text-[#ff3b45]");
+    expect(screen.queryByText("-£25.00")).not.toBeInTheDocument();
+  });
+
   it("updates account value and unrealised P/L from the portfolio endpoint every five seconds", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ account: accountWithUnrealizedPnl(12, 1012) }),
     });
 
-    render(<LiveDashboardAccountSummary initialAccount={accountWithUnrealizedPnl(-5, 995)} />);
+    render(<LiveDashboardAccountSummary initialAccount={accountWithUnrealizedPnl(-5, 995, -3)} />);
     expect(screen.getByText("£995.00")).toBeInTheDocument();
     expect(screen.getByText("-£5.00")).toBeInTheDocument();
 
@@ -70,11 +85,12 @@ describe("DashboardAccountSummary", () => {
   });
 });
 
-function accountWithUnrealizedPnl(unrealizedProfitLoss: number, totalValue = 1000) {
+function accountWithUnrealizedPnl(unrealizedProfitLoss: number, totalValue = 1000, weeklyRealizedProfitLoss = 25) {
   return {
     id: 1,
     totalValue,
     unrealizedProfitLoss,
+    weeklyRealizedProfitLoss,
     currency: "GBP",
     cash: { availableToTrade: 0, inPies: 0, reservedForOrders: 0 },
     realizedProfitLoss: 0,

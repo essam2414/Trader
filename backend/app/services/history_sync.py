@@ -1,10 +1,9 @@
 """History sync service.
 
 Pulls Trading212's order-fill and dividend history into the local
-`order_fills` / `dividends` tables. Each run walks every page of both
-endpoints (page ordering isn't documented, so an early-stop-at-known-id
-shortcut isn't safe) and upserts by id, skipping ids already stored. At
-single-user, hundreds-of-fills scale this is a handful of API calls per run.
+`order_fills` / `dividends` tables. A new database is fully backfilled once;
+subsequent jobs inspect only the newest rate-limit-safe window and upsert by
+id, skipping rows already stored.
 """
 
 from datetime import datetime
@@ -13,8 +12,11 @@ from urllib.parse import parse_qs, urlparse
 from sqlalchemy.orm import Session
 
 from ..fx import get_historical_rate
-from ..models import Dividend, OrderFill
+from ..models import Dividend, HistorySyncState, OrderFill
 from ..trading212 import Trading212Client
+
+HISTORY_PAGE_SIZE = 50
+MAX_RECENT_HISTORY_PAGES = 6
 
 
 def _extract_cursor(next_page_path: str | None) -> int | None:
@@ -26,7 +28,9 @@ def _extract_cursor(next_page_path: str | None) -> int | None:
     return int(values[0]) if values else None
 
 
-def sync_order_fills(session: Session, client: Trading212Client, target_currency: str) -> int:
+def sync_order_fills(
+    session: Session, client: Trading212Client, target_currency: str, max_pages: int | None = None
+) -> int:
     """Sync historical order fills; returns the number of new rows added.
 
     Only fills with type "TRADE" are stored — corporate-action fills
@@ -49,8 +53,10 @@ def sync_order_fills(session: Session, client: Trading212Client, target_currency
     rate_cache: dict[tuple[str, str], float] = {}
     added = 0
     cursor: int | None = None
-    while True:
-        page = client.get_historical_orders(cursor=cursor)
+    pages_fetched = 0
+    while max_pages is None or pages_fetched < max_pages:
+        page = client.get_historical_orders(cursor=cursor, limit=HISTORY_PAGE_SIZE)
+        pages_fetched += 1
         for item in page["items"]:
             fill = item.get("fill")
             if fill is None:
@@ -102,7 +108,7 @@ def sync_order_fills(session: Session, client: Trading212Client, target_currency
     return added
 
 
-def sync_dividends(session: Session, client: Trading212Client) -> int:
+def sync_dividends(session: Session, client: Trading212Client, max_pages: int | None = None) -> int:
     """Sync historical dividend payments; returns the number of new rows added.
 
     Unlike order fills, Trading212 reports dividend `amount` directly in the
@@ -111,8 +117,10 @@ def sync_dividends(session: Session, client: Trading212Client) -> int:
     existing_ids = {row.id for row in session.query(Dividend.id).all()}
     added = 0
     cursor: int | None = None
-    while True:
-        page = client.get_dividends(cursor=cursor)
+    pages_fetched = 0
+    while max_pages is None or pages_fetched < max_pages:
+        page = client.get_dividends(cursor=cursor, limit=HISTORY_PAGE_SIZE)
+        pages_fetched += 1
         for item in page["items"]:
             dividend_id = item.get("reference") or (f"{item['ticker']}:{item['paidOn']}:{item['amount']}")
             if dividend_id in existing_ids:
@@ -136,7 +144,51 @@ def sync_dividends(session: Session, client: Trading212Client) -> int:
     return added
 
 
+def _initial_backfill_complete(
+    session: Session, source: str, model: type[OrderFill] | type[Dividend]
+) -> bool:
+    if session.get(HistorySyncState, source) is not None:
+        return True
+
+    # Existing installations predate HistorySyncState. Their populated
+    # history is already a completed backfill, so do not restart a multi-
+    # minute full scan merely because the checkpoint table is new.
+    if session.query(model.id).first() is None:
+        return False
+
+    _mark_initial_backfill_complete(session, source)
+    return True
+
+
+def _mark_initial_backfill_complete(session: Session, source: str) -> None:
+    session.add(HistorySyncState(source=source))
+    session.commit()
+
+
 def sync_history(session: Session, client: Trading212Client, target_currency: str) -> None:
-    """Sync both order fills and dividends; invoked on a timer by the scheduler."""
-    sync_order_fills(session, client, target_currency)
-    sync_dividends(session, client)
+    """Sync history without exceeding Trading212's six-request-per-minute quota.
+
+    New installations fully backfill each source once. Afterwards, each
+    minute checks the six newest 50-item pages (300 events) and skips IDs
+    that are already in the database. That window comfortably covers new
+    events between successful minute runs while keeping each endpoint within
+    its own documented request budget.
+    """
+    orders_backfilled = _initial_backfill_complete(session, "orders", OrderFill)
+    sync_order_fills(
+        session,
+        client,
+        target_currency,
+        max_pages=MAX_RECENT_HISTORY_PAGES if orders_backfilled else None,
+    )
+    if not orders_backfilled:
+        _mark_initial_backfill_complete(session, "orders")
+
+    dividends_backfilled = _initial_backfill_complete(session, "dividends", Dividend)
+    sync_dividends(
+        session,
+        client,
+        max_pages=MAX_RECENT_HISTORY_PAGES if dividends_backfilled else None,
+    )
+    if not dividends_backfilled:
+        _mark_initial_backfill_complete(session, "dividends")

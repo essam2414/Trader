@@ -24,6 +24,7 @@ class AccountSummary(BaseModel):
     cash: CashBreakdown
     unrealizedProfitLoss: float
     realizedProfitLoss: float
+    weeklyRealizedProfitLoss: float
 
 
 class Position(BaseModel):

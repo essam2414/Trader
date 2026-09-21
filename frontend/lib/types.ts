@@ -14,6 +14,7 @@ export interface AccountSummary {
   cash: CashBreakdown;
   unrealizedProfitLoss: number;
   realizedProfitLoss: number;
+  weeklyRealizedProfitLoss: number;
 }
 
 export interface Position {

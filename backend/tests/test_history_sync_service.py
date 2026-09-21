@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from app.models import Dividend, OrderFill
+from app.models import Dividend, HistorySyncState, OrderFill
 from app.services.history_sync import sync_dividends, sync_history, sync_order_fills
 
 ORDER_PAGE_1 = {
@@ -112,8 +112,8 @@ def test_sync_order_fills_paginates_and_filters_non_trade_fills(db_session):
     stored_ids = {row.id for row in db_session.query(OrderFill).all()}
     assert stored_ids == {"101", "103"}
     assert fake_client.get_historical_orders.call_count == 2
-    fake_client.get_historical_orders.assert_any_call(cursor=None)
-    fake_client.get_historical_orders.assert_any_call(cursor=2)
+    fake_client.get_historical_orders.assert_any_call(cursor=None, limit=50)
+    fake_client.get_historical_orders.assert_any_call(cursor=2, limit=50)
 
 
 def test_sync_order_fills_sums_taxes_into_fees(db_session):
@@ -159,6 +159,22 @@ def test_sync_order_fills_is_idempotent(db_session):
 
     assert second_added == 0
     assert db_session.query(OrderFill).count() == 2
+
+
+def test_sync_order_fills_caps_minute_sync_at_six_fifty_item_pages(db_session):
+    """A recurring sync must stay inside Trading212's six-requests-per-minute limit."""
+    fake_client = MagicMock()
+    pages = [
+        {"items": [], "nextPagePath": f"/api/v0/equity/history/orders?cursor={page}&limit=50"}
+        for page in range(1, 7)
+    ]
+    fake_client.get_historical_orders.side_effect = pages
+
+    sync_order_fills(db_session, fake_client, target_currency="USD", max_pages=6)
+
+    assert fake_client.get_historical_orders.call_count == 6
+    assert fake_client.get_historical_orders.call_args_list[0].kwargs == {"cursor": None, "limit": 50}
+    assert fake_client.get_historical_orders.call_args_list[-1].kwargs == {"cursor": 5, "limit": 50}
 
 
 @patch("app.services.history_sync.get_historical_rate")
@@ -254,3 +270,42 @@ def test_sync_history_syncs_both_orders_and_dividends(db_session):
 
     assert db_session.query(OrderFill).count() == 2
     assert db_session.query(Dividend).count() == 2
+    assert {state.source for state in db_session.query(HistorySyncState).all()} == {"orders", "dividends"}
+
+
+def test_sync_history_uses_six_recent_pages_after_initial_backfill(db_session):
+    db_session.add_all([HistorySyncState(source="orders"), HistorySyncState(source="dividends")])
+    db_session.commit()
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.side_effect = [
+        {"items": [], "nextPagePath": f"/api/v0/equity/history/orders?cursor={page}&limit=50"}
+        for page in range(1, 7)
+    ]
+    fake_client.get_dividends.side_effect = [
+        {"items": [], "nextPagePath": f"/api/v0/equity/history/dividends?cursor={page}&limit=50"}
+        for page in range(1, 7)
+    ]
+
+    sync_history(db_session, fake_client, target_currency="USD")
+
+    assert fake_client.get_historical_orders.call_count == 6
+    assert fake_client.get_dividends.call_count == 6
+
+
+def test_sync_history_marks_existing_history_as_backfilled(db_session):
+    """Adding checkpoints must not restart a full scan of an existing database."""
+    initial_client = MagicMock()
+    initial_client.get_historical_orders.side_effect = [ORDER_PAGE_1, ORDER_PAGE_2]
+    sync_order_fills(db_session, initial_client, target_currency="USD")
+
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.side_effect = [
+        {"items": [], "nextPagePath": f"/api/v0/equity/history/orders?cursor={page}&limit=50"}
+        for page in range(1, 7)
+    ]
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+
+    sync_history(db_session, fake_client, target_currency="USD")
+
+    assert fake_client.get_historical_orders.call_count == 6
+    assert {state.source for state in db_session.query(HistorySyncState).all()} == {"orders", "dividends"}

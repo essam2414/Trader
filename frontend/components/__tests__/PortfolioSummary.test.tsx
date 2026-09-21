@@ -16,6 +16,7 @@ describe("PortfolioSummary", () => {
           cash: { availableToTrade: 500, inPies: 0, reservedForOrders: 0 },
           unrealizedProfitLoss: 750.5,
           realizedProfitLoss: 120,
+          weeklyRealizedProfitLoss: 0,
         }}
       />
     );

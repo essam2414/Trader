@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 const REFRESH_INTERVAL_MS = 5_000;
 
-export function PortfolioAutoRefresh() {
+export function PageAutoRefresh({ intervalMs }: { intervalMs: number }) {
   const { refresh } = useRouter();
 
   useEffect(() => {
@@ -20,7 +20,7 @@ export function PortfolioAutoRefresh() {
 
     const startRefresh = () => {
       if (document.visibilityState === "visible" && interval === undefined) {
-        interval = window.setInterval(refresh, REFRESH_INTERVAL_MS);
+        interval = window.setInterval(refresh, intervalMs);
       }
     };
 
@@ -38,7 +38,11 @@ export function PortfolioAutoRefresh() {
       stopRefresh();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refresh]);
+  }, [intervalMs, refresh]);
 
   return null;
+}
+
+export function PortfolioAutoRefresh() {
+  return <PageAutoRefresh intervalMs={REFRESH_INTERVAL_MS} />;
 }

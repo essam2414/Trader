@@ -79,7 +79,9 @@ class Trading212Client:
         """
         return self._get("/equity/positions").json()
 
-    def get_historical_orders(self, cursor: int | None = None, ticker: str | None = None) -> dict:
+    def get_historical_orders(
+        self, cursor: int | None = None, ticker: str | None = None, limit: int = 50
+    ) -> dict:
         """Retrieve one page of historical order/fill data.
 
         Args:
@@ -99,9 +101,10 @@ class Trading212Client:
             params["cursor"] = cursor
         if ticker is not None:
             params["ticker"] = ticker
+        params["limit"] = limit
         return self._get("/equity/history/orders", params).json()
 
-    def get_dividends(self, cursor: int | None = None, ticker: str | None = None) -> dict:
+    def get_dividends(self, cursor: int | None = None, ticker: str | None = None, limit: int = 50) -> dict:
         """Retrieve one page of historical dividend payment data.
 
         Args:
@@ -121,4 +124,5 @@ class Trading212Client:
             params["cursor"] = cursor
         if ticker is not None:
             params["ticker"] = ticker
+        params["limit"] = limit
         return self._get("/equity/history/dividends", params).json()

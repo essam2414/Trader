@@ -105,9 +105,9 @@ def test_get_historical_orders_returns_items_and_next_page_path():
 
 
 @respx.mock
-def test_get_historical_orders_sends_cursor_as_query_param():
+def test_get_historical_orders_sends_cursor_and_max_page_size_as_query_params():
     """When given a cursor, get_historical_orders should send it as a query param."""
-    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2"}).mock(
+    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2", "limit": "50"}).mock(
         return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
     )
     client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)

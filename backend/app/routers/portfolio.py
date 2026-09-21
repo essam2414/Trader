@@ -5,6 +5,9 @@ live from Trading212) and the historical equity-curve data (stored
 PortfolioSnapshot rows). All routes require the shared dashboard API key.
 """
 
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -33,6 +36,7 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 def get_current_portfolio(
     client: Trading212Client = Depends(get_trading212_client),
     cache: PortfolioCurrentCache = Depends(get_portfolio_current_cache),
+    db: Session = Depends(get_db),
 ) -> PortfolioCurrent:
     """Fetch the live account summary and open positions from Trading212.
 
@@ -43,6 +47,17 @@ def get_current_portfolio(
     def load() -> PortfolioCurrent:
         summary = client.get_account_summary()
         positions = client.get_positions()
+        london_now = datetime.now(ZoneInfo("Europe/London"))
+        week_start = (london_now - timedelta(days=london_now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        week_start_utc = week_start.astimezone(timezone.utc)
+        weekly_realized_profit_loss = sum(
+            fill.realised_profit_loss
+            for fill in db.query(OrderFill)
+            .filter(OrderFill.side == "SELL", OrderFill.filled_at >= week_start_utc)
+            .all()
+        )
         return PortfolioCurrent(
             account=AccountSummary(
                 id=summary["id"],
@@ -51,6 +66,7 @@ def get_current_portfolio(
                 cash=CashBreakdown(**summary["cash"]),
                 unrealizedProfitLoss=summary["investments"]["unrealizedProfitLoss"],
                 realizedProfitLoss=summary["investments"]["realizedProfitLoss"],
+                weeklyRealizedProfitLoss=weekly_realized_profit_loss,
             ),
             positions=[
                 Position(

@@ -74,14 +74,19 @@ class Trading212RateLimiter:
 
     @contextmanager
     def limit(self, path: str) -> Iterator[None]:
-        """Reserve the rate budget for ``path`` and serialize its request."""
+        """Reserve the rate budget for ``path`` and serialize the actual request.
+
+        A request that is waiting for one endpoint's quota must not prevent a
+        different endpoint from serving a live portfolio refresh. The global
+        lock therefore covers only the provider request, not quota waiting.
+        """
         try:
             endpoint_limiter = self._endpoint_limiters[path]
         except KeyError as exc:
             raise ValueError(f"No Trading212 rate limit configured for {path}") from exc
 
-        with self._request_lock:
-            with endpoint_limiter:
+        with endpoint_limiter:
+            with self._request_lock:
                 yield
 
 

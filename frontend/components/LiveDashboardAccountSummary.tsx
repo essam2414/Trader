@@ -38,6 +38,11 @@ export function LiveDashboardAccountSummary({ initialAccount }: { initialAccount
     : account.unrealizedProfitLoss < 0
       ? "text-[#ff3b45]"
       : "text-neutral-100";
+  const weeklyRealizedClassName = account.weeklyRealizedProfitLoss > 0
+    ? "text-[#32e64d]"
+    : account.weeklyRealizedProfitLoss < 0
+      ? "text-[#ff3b45]"
+      : "text-neutral-100";
 
   return (
     <section className="flex h-[72px] items-start gap-10 sm:gap-14" aria-label="Account overview">
@@ -53,6 +58,14 @@ export function LiveDashboardAccountSummary({ initialAccount }: { initialAccount
           className={`mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight [font-variant-numeric:tabular-nums] ${unrealizedClassName}`}
         >
           {formatCurrency(account.unrealizedProfitLoss, account.currency)}
+        </p>
+      </article>
+      <article className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Weekly gain</p>
+        <p
+          className={`mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight [font-variant-numeric:tabular-nums] ${weeklyRealizedClassName}`}
+        >
+          {formatCurrency(Math.abs(account.weeklyRealizedProfitLoss), account.currency)}
         </p>
       </article>
     </section>

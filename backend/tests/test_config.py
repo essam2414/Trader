@@ -34,4 +34,4 @@ def test_settings_loads_from_environment_with_defaults(monkeypatch):
     assert settings.trading212_base_url == "https://live.trading212.com/api/v0"
     assert settings.database_url == "sqlite:///./dev.db"
     assert settings.snapshot_interval_minutes == 15
-    assert settings.history_sync_interval_minutes == 60
+    assert settings.history_sync_interval_minutes == 1

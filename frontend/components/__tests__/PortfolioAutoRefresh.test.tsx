@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh }),
 }));
 
-import { PortfolioAutoRefresh } from "../PortfolioAutoRefresh";
+import { PageAutoRefresh, PortfolioAutoRefresh } from "../PortfolioAutoRefresh";
 
 describe("PortfolioAutoRefresh", () => {
   beforeEach(() => {
@@ -39,5 +39,19 @@ describe("PortfolioAutoRefresh", () => {
     });
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("uses the interval requested by another page", () => {
+    render(<PageAutoRefresh intervalMs={60_000} />);
+
+    act(() => {
+      vi.advanceTimersByTime(59_999);
+    });
+    expect(refresh).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });

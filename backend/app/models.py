@@ -62,6 +62,17 @@ class Dividend(Base):
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class HistorySyncState(Base):
+    """Marks history streams that have completed their one-time full backfill."""
+
+    __tablename__ = "history_sync_states"
+
+    source: Mapped[str] = mapped_column(String(16), primary_key=True)
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class WatchlistEntry(Base):
     """A locally persisted, read-only reference to an Alpaca US equity."""
 
