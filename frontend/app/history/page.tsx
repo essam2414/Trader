@@ -12,15 +12,15 @@ export default async function HistoryPage() {
     <main className="mx-auto w-full max-w-[1360px] space-y-6 p-8 xl:p-10">
       <PageAutoRefresh intervalMs={60_000} />
 
-      <section className="rounded-lg border border-neutral-800 bg-neutral-900 p-6">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-neutral-500">
+      <section>
+        <h2 className="mb-4 text-xl font-semibold tracking-tight text-neutral-100">
           Trade history
         </h2>
         <TradeHistoryTable trades={metrics.trades} currency={current.account.currency} />
       </section>
 
-      <section className="rounded-lg border border-neutral-800 bg-neutral-900 p-6">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-neutral-500">
+      <section>
+        <h2 className="mb-4 text-xl font-semibold tracking-tight text-neutral-100">
           Performance by ticker
         </h2>
         <TickerPerformanceTable

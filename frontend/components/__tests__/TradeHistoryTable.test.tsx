@@ -10,7 +10,7 @@ import { TradeHistoryTable } from "../TradeHistoryTable";
 
 const TRADE: Trade = {
   ticker: "AAPL_US_EQ",
-  quantity: 10,
+  quantity: 10.126,
   entryPrice: 100,
   entryAt: "2026-01-01T10:00:00Z",
   exitPrice: 110,
@@ -29,7 +29,7 @@ describe("TradeHistoryTable", () => {
 
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("AAPL_US_EQ")).not.toBeInTheDocument();
-    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText("10.13")).toBeInTheDocument();
     expect(screen.getByText(formatCurrency(100, "USD"))).toBeInTheDocument();
     expect(screen.getByText(formatCurrency(110, "USD"))).toBeInTheDocument();
     expect(screen.getByText(formatCurrency(98, "USD"))).toBeInTheDocument();
@@ -40,6 +40,20 @@ describe("TradeHistoryTable", () => {
     render(<TradeHistoryTable trades={[]} currency="USD" />);
 
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
+  });
+
+  it("uses the dashboard P/L colours", () => {
+    render(
+      <TradeHistoryTable
+        currency="USD"
+        trades={[TRADE, { ...TRADE, ticker: "LOSS_US_EQ", pnl: -12 }, { ...TRADE, ticker: "EVEN_US_EQ", pnl: 0 }]}
+      />
+    );
+
+    expect(screen.getByText(formatCurrency(98, "USD"))).toHaveClass("text-[#32e64d]");
+    expect(screen.getByText(formatCurrency(12, "USD"))).toHaveClass("text-[#ff3b45]");
+    expect(screen.queryByText(formatCurrency(-12, "USD"))).not.toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(0, "USD"))).toHaveClass("text-neutral-100");
   });
 
   it("shows only the first 10 rows and reveals the next 10 after clicking Next", () => {
