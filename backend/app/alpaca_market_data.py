@@ -59,6 +59,19 @@ class MarketQuote:
     is_extended_hours: bool
 
 
+@dataclass(frozen=True)
+class NewsArticle:
+    """One Alpaca news article, retaining the full provider record for its detail view."""
+
+    article_id: int
+    headline: str
+    summary: str | None
+    created_at: datetime
+    updated_at: datetime
+    symbols: list[str]
+    raw_data: dict[str, Any]
+
+
 class AlpacaMarketDataClient:
     """Hide Alpaca catalog, calendar, quote, adjustment and retry details."""
 
@@ -345,6 +358,45 @@ class AlpacaMarketDataClient:
                 for symbol in symbols
                 if symbol in self._last_quotes
             }
+
+    def get_watchlist_news(self, symbols: list[str], limit: int = 50) -> list[NewsArticle]:
+        """Return the newest unique articles that Alpaca associates with a watchlist symbol."""
+        watchlist_symbols = {symbol.strip().upper() for symbol in symbols if symbol.strip()}
+        if not watchlist_symbols:
+            return []
+        payload = self._request(
+            DATA_BASE_URL,
+            "/v1beta1/news",
+            {
+                "symbols": ",".join(sorted(watchlist_symbols)),
+                "limit": str(limit),
+                "sort": "desc",
+                "include_content": "true",
+            },
+        )
+        by_id: dict[int, NewsArticle] = {}
+        for article in payload.get("news", []):
+            article_symbols = [str(symbol).upper() for symbol in article.get("symbols", [])]
+            if not watchlist_symbols.intersection(article_symbols):
+                continue
+            try:
+                news_article = NewsArticle(
+                    article_id=int(article["id"]),
+                    headline=str(article["headline"]),
+                    summary=article.get("summary"),
+                    created_at=datetime.fromisoformat(article["created_at"].replace("Z", "+00:00")),
+                    updated_at=datetime.fromisoformat(article["updated_at"].replace("Z", "+00:00")),
+                    symbols=article_symbols,
+                    raw_data=dict(article),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            existing = by_id.get(news_article.article_id)
+            if existing is None or news_article.updated_at > existing.updated_at:
+                by_id[news_article.article_id] = news_article
+        return sorted(
+            by_id.values(), key=lambda article: (article.updated_at, article.article_id), reverse=True
+        )
 
     @staticmethod
     def _stale_copy(quote: MarketQuote) -> MarketQuote:

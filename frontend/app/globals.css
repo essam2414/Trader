@@ -7,3 +7,25 @@ body {
   background-attachment: fixed;
   scrollbar-gutter: stable;
 }
+
+.dashboard-pane-scrollbar {
+  scrollbar-color: #525252 transparent;
+  scrollbar-width: thin;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: #525252;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #737373;
+}

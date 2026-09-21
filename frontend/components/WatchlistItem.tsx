@@ -1,4 +1,4 @@
-import { useState, type DragEvent } from "react";
+import { useState, type CSSProperties, type DragEvent, type PointerEvent } from "react";
 import { formatWatchlistPrice } from "../lib/format";
 import type { WatchlistEntry } from "../lib/types";
 import { WatchlistSparkline, type WatchlistTrend } from "./WatchlistSparkline";
@@ -10,11 +10,17 @@ interface WatchlistItemProps {
   mode: WatchlistMode;
   isDragging: boolean;
   isSavingOrder: boolean;
-  onDragStart: (event: DragEvent<HTMLDivElement>, assetId: string) => void;
-  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
-  onDrop: (assetId: string) => void;
-  onDragEnd: () => void;
+  onDragStart?: (event: DragEvent<HTMLDivElement>, assetId: string) => void;
+  onDragOver?: (event: DragEvent<HTMLDivElement>, assetId: string) => void;
+  onDrop?: (assetId: string) => void;
+  onDragEnd?: () => void;
   onRemove: (assetId: string) => void;
+  itemRef?: (element: HTMLDivElement | null) => void;
+  onPointerDragStart?: (event: PointerEvent<HTMLDivElement>, assetId: string) => void;
+  onPointerDragMove?: (event: PointerEvent<HTMLDivElement>) => void;
+  onPointerDragEnd?: (event: PointerEvent<HTMLDivElement>) => void;
+  onPointerDragCancel?: (event: PointerEvent<HTMLDivElement>) => void;
+  dragStyle?: CSSProperties;
 }
 
 function initials(name: string): string {
@@ -75,29 +81,38 @@ export function WatchlistItem({
   mode,
   isDragging,
   isSavingOrder,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
   onRemove,
+  itemRef,
+  onPointerDragStart,
+  onPointerDragMove,
+  onPointerDragEnd,
+  onPointerDragCancel,
+  dragStyle,
 }: WatchlistItemProps) {
   const trend = trendFor(entry);
   const percentChange = entry.quote.percentChange;
   const changeClass = trend === "positive" ? "text-[#32e64d]" : trend === "negative" ? "text-[#ff3b45]" : "text-[#8a9298]";
   const changeIndicator = trend === "positive" ? "↗" : trend === "negative" ? "↘" : "–";
   const interactiveClass = mode === "move"
-    ? "cursor-grab active:cursor-grabbing"
+    ? "cursor-grab select-none touch-none active:cursor-grabbing"
     : mode === "delete"
       ? "cursor-pointer hover:bg-rose-400/[0.07] focus-visible:bg-rose-400/[0.07]"
       : "cursor-default hover:bg-neutral-800/40 focus-visible:bg-neutral-800/40";
 
   return (
     <div
-      draggable={mode === "move" && !isSavingOrder}
-      onDragStart={(event) => onDragStart(event, entry.assetId)}
-      onDragOver={onDragOver}
-      onDrop={() => onDrop(entry.assetId)}
-      onDragEnd={onDragEnd}
+      ref={itemRef}
+      data-watchlist-entry={entry.assetId}
+      draggable={false}
+      onPointerDown={(event) => {
+        if (mode !== "move" || isSavingOrder) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onPointerDragStart?.(event, entry.assetId);
+      }}
+      onPointerMove={onPointerDragMove}
+      onPointerUp={onPointerDragEnd}
+      onPointerCancel={onPointerDragCancel}
       onClick={() => {
         if (mode === "delete") onRemove(entry.assetId);
       }}
@@ -110,7 +125,8 @@ export function WatchlistItem({
       role={mode === "delete" ? "button" : undefined}
       aria-label={mode === "delete" ? `Remove ${entry.symbol}` : undefined}
       tabIndex={mode === "delete" ? 0 : undefined}
-      className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_80px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "opacity-40" : ""}`}
+      style={dragStyle}
+      className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_80px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-[background-color,opacity,box-shadow] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "shadow-2xl shadow-black/70" : ""}`}
     >
       {mode === "move" && <span aria-hidden="true" className="absolute left-1 top-1/2 -translate-y-1/2 text-xs tracking-[-0.2em] text-neutral-600">⋮⋮</span>}
       <StockLogo name={entry.name} logoUrl={entry.logoUrl} />

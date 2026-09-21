@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 import { AUTH_COOKIE, isAuthenticated } from "./auth";
 import { backendRequest } from "./api";
 
-export async function watchlistBackendRequest(path: string, init: RequestInit = {}): Promise<NextResponse> {
+export async function authenticatedBackendRequest(
+  path: string,
+  init: RequestInit = {},
+  unavailableMessage = "Service is unavailable",
+): Promise<NextResponse> {
   const token = (await cookies()).get(AUTH_COOKIE)?.value;
   if (!(await isAuthenticated(token))) {
     return NextResponse.json({ message: "Unauthenticated" }, { status: 401 });
@@ -17,8 +21,12 @@ export async function watchlistBackendRequest(path: string, init: RequestInit = 
     const body: unknown = await response.json().catch(() => ({ message: "Invalid backend response" }));
     return NextResponse.json(body, { status: response.status });
   } catch {
-    return NextResponse.json({ message: "Watchlist service is unavailable" }, { status: 502 });
+    return NextResponse.json({ message: unavailableMessage }, { status: 502 });
   }
+}
+
+export function watchlistBackendRequest(path: string, init: RequestInit = {}): Promise<NextResponse> {
+  return authenticatedBackendRequest(path, init, "Watchlist service is unavailable");
 }
 
 export async function watchlistLogoBackendRequest(path: string): Promise<NextResponse> {

@@ -120,3 +120,13 @@ export interface WatchlistEntry {
   logoUrl: string;
   quote: WatchlistQuote;
 }
+
+export interface NewsArticle {
+  id: number;
+  headline: string;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  watchlistSymbols: string[];
+  rawData: Record<string, unknown>;
+}

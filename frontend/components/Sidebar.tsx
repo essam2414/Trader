@@ -18,7 +18,7 @@ const navigation: NavItem[] = [
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={iconClassName} aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></svg>,
   },
   {
-    href: "/",
+    href: "/account",
     label: "Account",
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={iconClassName} aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M4.5 20c.8-3.8 3.5-5.8 7.5-5.8s6.7 2 7.5 5.8" /></svg>,
   },
@@ -71,7 +71,7 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      <nav className="mt-auto border-t border-neutral-800 pt-5" aria-label="Application settings">
+      <nav className="-mx-5 mt-auto border-t border-neutral-800 px-5 pt-5" aria-label="Application settings">
         <ul>
           <SidebarLink item={settingsNavigation} pathname={pathname} />
         </ul>

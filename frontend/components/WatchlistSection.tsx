@@ -1,11 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { WatchlistEntry, WatchlistSearchResult } from "../lib/types";
 import { WatchlistItem, type WatchlistMode } from "./WatchlistItem";
 
 const POLL_INTERVAL_MS = 60_000;
 export { conciseStockName } from "./WatchlistItem";
+
+type DragState = {
+  assetId: string;
+  pointerId: number;
+  offsetY: number;
+  width: number;
+  x: number;
+  y: number;
+};
 
 export function WatchlistSection() {
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
@@ -15,6 +24,7 @@ export function WatchlistSection() {
   const [isSearching, setIsSearching] = useState(false);
   const [tableMode, setTableMode] = useState<WatchlistMode>("default");
   const [draggedAssetId, setDraggedAssetId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -22,6 +32,34 @@ export function WatchlistSection() {
   const searchRequest = useRef(0);
   const searchAbort = useRef<AbortController | null>(null);
   const searchContainer = useRef<HTMLDivElement | null>(null);
+  const entryElements = useRef(new Map<string, HTMLDivElement>());
+  const previousEntryTops = useRef(new Map<string, number>());
+  const entryAnimations = useRef(new Map<string, Animation>());
+  const entriesRef = useRef(entries);
+  const dragStateRef = useRef<DragState | null>(null);
+  const dragStartEntries = useRef<WatchlistEntry[] | null>(null);
+  const previewTarget = useRef<string | null>(null);
+  const hasDropped = useRef(false);
+
+  useLayoutEffect(() => {
+    const nextEntryTops = new Map<string, number>();
+    for (const entry of entries) {
+      const element = entryElements.current.get(entry.assetId);
+      if (!element) continue;
+      const top = element.getBoundingClientRect().top;
+      const previousTop = previousEntryTops.current.get(entry.assetId);
+      if (previousTop !== undefined && previousTop !== top && typeof element.animate === "function") {
+        entryAnimations.current.get(entry.assetId)?.cancel();
+        const animation = element.animate(
+          [{ transform: `translateY(${previousTop - top}px)` }, { transform: "translateY(0)" }],
+          { duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+        );
+        entryAnimations.current.set(entry.assetId, animation);
+      }
+      nextEntryTops.set(entry.assetId, top);
+    }
+    previousEntryTops.current = nextEntryTops;
+  }, [entries]);
 
   const loadWatchlist = useCallback(async () => {
     const requestId = ++listRequest.current;
@@ -122,7 +160,7 @@ export function WatchlistSection() {
     setEntries((current) => current.filter((entry) => entry.assetId !== assetId));
   }
 
-  async function persistOrder(orderedEntries: WatchlistEntry[]) {
+  const persistOrder = useCallback(async (orderedEntries: WatchlistEntry[]) => {
     setIsSavingOrder(true);
     try {
       const response = await fetch("/api/watchlist/order", {
@@ -140,24 +178,132 @@ export function WatchlistSection() {
     } finally {
       setIsSavingOrder(false);
     }
+  }, [loadWatchlist]);
+
+  function previewRowMove(targetAssetId: string, pointerY: number, targetBounds: DOMRect) {
+    const startingEntries = dragStartEntries.current;
+    if (
+      !draggedAssetId
+      || !startingEntries
+      || draggedAssetId === targetAssetId
+      || previewTarget.current === targetAssetId
+      || isSavingOrder
+    ) return;
+
+    const placeAfterTarget = pointerY >= targetBounds.top + targetBounds.height / 2;
+    const fromIndex = startingEntries.findIndex((entry) => entry.assetId === draggedAssetId);
+    const targetIndex = startingEntries.findIndex((entry) => entry.assetId === targetAssetId);
+    if (fromIndex < 0 || targetIndex < 0) return;
+
+    const nextEntries = [...startingEntries];
+    const [moved] = nextEntries.splice(fromIndex, 1);
+    const targetIndexAfterRemoval = nextEntries.findIndex((entry) => entry.assetId === targetAssetId);
+    const insertionIndex = targetIndexAfterRemoval + (placeAfterTarget ? 1 : 0);
+    nextEntries.splice(insertionIndex, 0, moved);
+    if (nextEntries.every((entry, index) => entry.assetId === entriesRef.current[index]?.assetId)) return;
+
+    previewTarget.current = targetAssetId;
+    entriesRef.current = nextEntries;
+    setEntries(nextEntries);
   }
 
-  function dropRow(targetAssetId: string) {
-    if (!draggedAssetId || draggedAssetId === targetAssetId || isSavingOrder) return;
-    const fromIndex = entries.findIndex((entry) => entry.assetId === draggedAssetId);
-    const toIndex = entries.findIndex((entry) => entry.assetId === targetAssetId);
-    if (fromIndex < 0 || toIndex < 0) return;
-    const orderedEntries = [...entries];
-    const [moved] = orderedEntries.splice(fromIndex, 1);
-    orderedEntries.splice(toIndex, 0, moved);
-    setEntries(orderedEntries);
+  const cancelPointerDragById = useCallback((pointerId: number) => {
+    const activeDrag = dragStateRef.current;
+    if (!activeDrag || activeDrag.pointerId !== pointerId) return;
+    if (!hasDropped.current && dragStartEntries.current) {
+      entriesRef.current = dragStartEntries.current;
+      setEntries(dragStartEntries.current);
+    }
+    dragStartEntries.current = null;
+    previewTarget.current = null;
+    hasDropped.current = false;
+    dragStateRef.current = null;
     setDraggedAssetId(null);
-    void persistOrder(orderedEntries);
+    setDragState(null);
+  }, []);
+
+  function startPointerDrag(event: ReactPointerEvent<HTMLDivElement>, assetId: string) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    dragStartEntries.current = entries;
+    entriesRef.current = entries;
+    previewTarget.current = null;
+    hasDropped.current = false;
+    const nextDragState = {
+      assetId,
+      pointerId: event.pointerId,
+      offsetY: event.clientY - bounds.top,
+      width: bounds.width,
+      x: bounds.left,
+      y: bounds.top,
+    };
+    dragStateRef.current = nextDragState;
+    setDragState(nextDragState);
+    setDraggedAssetId(assetId);
+  }
+
+  function movePointerDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const activeDrag = dragStateRef.current;
+    if (!activeDrag || event.pointerId !== activeDrag.pointerId) return;
+    const nextDragState = {
+      ...activeDrag,
+      y: event.clientY - activeDrag.offsetY,
+    };
+    dragStateRef.current = nextDragState;
+    setDragState(nextDragState);
+
+    const target = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-watchlist-entry]");
+    const targetAssetId = target?.dataset.watchlistEntry;
+    if (targetAssetId && targetAssetId !== activeDrag.assetId) {
+      previewRowMove(targetAssetId, event.clientY, target.getBoundingClientRect());
+    }
+  }
+
+  const dropPointerDragById = useCallback((pointerId: number) => {
+    const activeDrag = dragStateRef.current;
+    if (!activeDrag || activeDrag.pointerId !== pointerId || hasDropped.current) return;
+    hasDropped.current = true;
+    dragStateRef.current = null;
+    setDraggedAssetId(null);
+    setDragState(null);
+    void persistOrder(entriesRef.current);
+  }, [persistOrder]);
+
+  function dropPointerDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    dropPointerDragById(event.pointerId);
+  }
+
+  function cancelPointerDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    cancelPointerDragById(event.pointerId);
+  }
+
+  useEffect(() => {
+    const handlePointerUp = (event: globalThis.PointerEvent) => dropPointerDragById(event.pointerId);
+    const handlePointerCancel = (event: globalThis.PointerEvent) => cancelPointerDragById(event.pointerId);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    return () => {
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }, [cancelPointerDragById, dropPointerDragById]);
+
+  function dragStyleFor(entry: WatchlistEntry): CSSProperties | undefined {
+    if (!dragState || dragState.assetId !== entry.assetId) return undefined;
+    return {
+      position: "fixed",
+      top: dragState.y,
+      left: dragState.x,
+      width: dragState.width,
+      zIndex: 30,
+      pointerEvents: "none",
+      touchAction: "none",
+    };
   }
 
   return (
-    <section className="min-w-0 pt-8" aria-labelledby="watchlist-heading">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+    <section className="mr-3 flex min-h-0 min-w-0 flex-col pt-6" aria-labelledby="watchlist-heading">
+      <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-3">
         <h2 id="watchlist-heading" className="text-xl font-semibold tracking-tight text-neutral-100">Watchlist</h2>
         {entries.length > 0 && (
           <div className="flex items-center gap-1">
@@ -188,31 +334,43 @@ export function WatchlistSection() {
           )}
         </div>
       </div>
-      {message && <p role="status" className="mt-3 rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-300">{message}</p>}
+      <div aria-label="Watchlist entries" className="dashboard-pane-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">
+        {message && <p role="status" className="rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-300">{message}</p>}
       {isLoading ? <p className="mt-4 text-sm text-neutral-500">Loading watchlist…</p> : entries.length === 0 ? <p className="mt-4 text-sm text-neutral-500">Search for a US equity to begin your watchlist.</p> : (
         <div className="mt-4 space-y-1">
-          {entries.map((entry) => (
-            <WatchlistItem
-              key={entry.assetId}
-              entry={entry}
-              mode={tableMode}
-              isDragging={draggedAssetId === entry.assetId}
-              isSavingOrder={isSavingOrder}
-              onDragStart={(event, assetId) => {
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", assetId);
-                setDraggedAssetId(assetId);
-              }}
-              onDragOver={(event) => {
-                if (tableMode === "move") event.preventDefault();
-              }}
-              onDrop={dropRow}
-              onDragEnd={() => setDraggedAssetId(null)}
-              onRemove={(assetId) => void removeAsset(assetId)}
-            />
-          ))}
+          {entries.map((entry) => {
+            const isDragging = draggedAssetId === entry.assetId;
+            const registerEntryElement = (element: HTMLDivElement | null) => {
+              if (element) entryElements.current.set(entry.assetId, element);
+              else entryElements.current.delete(entry.assetId);
+            };
+            const item = (
+              <WatchlistItem
+                entry={entry}
+                mode={tableMode}
+                isDragging={isDragging}
+                isSavingOrder={isSavingOrder}
+                onRemove={(assetId) => void removeAsset(assetId)}
+                itemRef={isDragging ? undefined : registerEntryElement}
+                onPointerDragStart={startPointerDrag}
+                onPointerDragMove={movePointerDrag}
+                onPointerDragEnd={dropPointerDrag}
+                onPointerDragCancel={cancelPointerDrag}
+                dragStyle={dragStyleFor(entry)}
+              />
+            );
+
+            if (!isDragging) return <div key={entry.assetId}>{item}</div>;
+
+            return (
+              <div key={entry.assetId} ref={registerEntryElement} className="min-h-[68px]">
+                {item}
+              </div>
+            );
+          })}
         </div>
       )}
+      </div>
     </section>
   );
 }

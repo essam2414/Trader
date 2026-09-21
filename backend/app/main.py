@@ -15,6 +15,7 @@ from .alpaca_market_data import AlpacaMarketDataClient
 from .config import settings
 from .db import Base, engine
 from .rate_limiter import trading212_rate_limiter
+from .routers.news import router as news_router
 from .routers.portfolio import router as portfolio_router
 from .routers.watchlist import router as watchlist_router
 from .scheduler import run_history_sync_job, run_snapshot_job
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Trader API", lifespan=lifespan)
 app.include_router(portfolio_router, prefix="/api")
+app.include_router(news_router, prefix="/api")
 app.include_router(watchlist_router, prefix="/api")
 
 

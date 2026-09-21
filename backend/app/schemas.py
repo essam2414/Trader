@@ -6,6 +6,7 @@ frontend-facing JSON contract for the portfolio router.
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -136,3 +137,15 @@ class WatchlistEntryOut(BaseModel):
     addedAt: datetime
     logoUrl: str
     quote: WatchlistQuoteOut
+
+
+class NewsArticleOut(BaseModel):
+    """A unique Alpaca article connected to at least one saved watchlist symbol."""
+
+    id: int
+    headline: str
+    summary: str | None
+    createdAt: datetime
+    updatedAt: datetime
+    watchlistSymbols: list[str]
+    rawData: dict[str, Any]
