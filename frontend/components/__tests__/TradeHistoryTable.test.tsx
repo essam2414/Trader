@@ -27,7 +27,8 @@ describe("TradeHistoryTable", () => {
   it("renders a row per trade with entry/exit details and P/L", () => {
     render(<TradeHistoryTable trades={[TRADE]} currency="USD" />);
 
-    expect(screen.getByText("AAPL_US_EQ")).toBeInTheDocument();
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.queryByText("AAPL_US_EQ")).not.toBeInTheDocument();
     expect(screen.getByText("10")).toBeInTheDocument();
     expect(screen.getByText(formatCurrency(100, "USD"))).toBeInTheDocument();
     expect(screen.getByText(formatCurrency(110, "USD"))).toBeInTheDocument();
@@ -44,15 +45,15 @@ describe("TradeHistoryTable", () => {
   it("shows only the first 10 rows and reveals the next 10 after clicking Next", () => {
     render(<TradeHistoryTable trades={makeTrades(15)} currency="USD" />);
 
-    expect(screen.getByText("TICK0_US_EQ")).toBeInTheDocument();
-    expect(screen.getByText("TICK9_US_EQ")).toBeInTheDocument();
-    expect(screen.queryByText("TICK10_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("TICK0")).toBeInTheDocument();
+    expect(screen.getByText("TICK9")).toBeInTheDocument();
+    expect(screen.queryByText("TICK10")).not.toBeInTheDocument();
     expect(screen.getByText("1–10 of 15")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    expect(screen.getByText("TICK10_US_EQ")).toBeInTheDocument();
-    expect(screen.getByText("TICK14_US_EQ")).toBeInTheDocument();
-    expect(screen.queryByText("TICK0_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("TICK10")).toBeInTheDocument();
+    expect(screen.getByText("TICK14")).toBeInTheDocument();
+    expect(screen.queryByText("TICK0")).not.toBeInTheDocument();
   });
 });

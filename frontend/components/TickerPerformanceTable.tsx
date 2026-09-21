@@ -4,7 +4,7 @@
 
 "use client";
 
-import { formatCurrency } from "../lib/format";
+import { formatCurrency, formatTicker } from "../lib/format";
 import type { TickerPerformance } from "../lib/types";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../lib/usePagination";
@@ -41,7 +41,7 @@ export function TickerPerformanceTable({
         <tbody className="divide-y divide-neutral-800/60">
           {pagination.pageItems.map((row) => (
             <tr key={row.ticker} className="transition-colors hover:bg-neutral-800/40">
-              <td className="px-4 py-3 font-medium text-neutral-100">{row.ticker}</td>
+              <td className="px-4 py-3 font-medium text-neutral-100">{formatTicker(row.ticker)}</td>
               <td className={`px-4 py-3 font-mono ${row.realizedPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                 {formatCurrency(row.realizedPnl, currency)}
               </td>

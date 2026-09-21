@@ -4,7 +4,7 @@
 
 "use client";
 
-import { formatCurrency } from "../lib/format";
+import { formatCurrency, formatTicker } from "../lib/format";
 import type { Trade } from "../lib/types";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../lib/usePagination";
@@ -56,7 +56,7 @@ export function TradeHistoryTable({ trades, currency }: { trades: Trade[]; curre
               key={`${trade.ticker}-${trade.entryAt}-${trade.exitAt}-${index}`}
               className="transition-colors hover:bg-neutral-800/40"
             >
-              <td className="px-4 py-3 font-medium text-neutral-100">{trade.ticker}</td>
+              <td className="px-4 py-3 font-medium text-neutral-100">{formatTicker(trade.ticker)}</td>
               <td className="px-4 py-3 font-mono text-neutral-300">{formatDate(trade.entryAt)}</td>
               <td className="px-4 py-3 font-mono text-neutral-300">
                 {formatCurrency(trade.entryPrice, currency)}
