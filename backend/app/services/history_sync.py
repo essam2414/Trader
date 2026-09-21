@@ -9,6 +9,7 @@ id, skipping rows already stored.
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 from sqlalchemy.orm import Session
 
 from ..fx import get_historical_rate
@@ -17,6 +18,8 @@ from ..trading212 import Trading212Client
 
 HISTORY_PAGE_SIZE = 50
 MAX_RECENT_HISTORY_PAGES = 6
+NATIVE_PRICE_BACKFILL_PAGES = 5
+NATIVE_PRICE_BACKFILL_SOURCE = "native_prices"
 
 
 def _extract_cursor(next_page_path: str | None) -> int | None:
@@ -47,9 +50,10 @@ def sync_order_fills(
     converted using the historical FX rate on the fill's date (a no-op,
     1.0 rate when the fill's currency already matches), and `fill_price` is
     derived as `net_value / quantity` in that target currency rather than
-    trusted from the raw `price` field.
+    trusted from the raw `price` field. The raw price and its instrument
+    currency are retained separately for display in trade history.
     """
-    existing_ids = {row.id for row in session.query(OrderFill.id).all()}
+    existing_fills = {row.id: row for row in session.query(OrderFill).all()}
     rate_cache: dict[tuple[str, str], float] = {}
     added = 0
     cursor: int | None = None
@@ -66,11 +70,21 @@ def sync_order_fills(
             if fill["type"] != "TRADE":
                 continue
             fill_id = str(fill["id"])
-            if fill_id in existing_ids:
-                continue
             order = item["order"]
             wallet_impact = fill["walletImpact"]
             fill_currency = wallet_impact["currency"]
+            source_price = fill["price"]
+            source_currency = order["currency"]
+
+            existing_fill = existing_fills.get(fill_id)
+            if existing_fill is not None:
+                # Older installations did not retain the native quote. A
+                # one-time full refresh populates it without changing the
+                # normalized values used for P/L calculations.
+                if existing_fill.source_price is None or existing_fill.source_currency is None:
+                    existing_fill.source_price = source_price
+                    existing_fill.source_currency = source_currency
+                continue
             filled_at = datetime.fromisoformat(fill["filledAt"].replace("Z", "+00:00"))
 
             cache_key = (filled_at.date().isoformat(), fill_currency)
@@ -84,22 +98,23 @@ def sync_order_fills(
             realised_profit_loss = (wallet_impact.get("realisedProfitLoss") or 0.0) * rate
             fill_price = net_value / quantity if quantity else 0.0
 
-            session.add(
-                OrderFill(
-                    id=fill_id,
-                    order_id=str(order["id"]),
-                    ticker=order["ticker"],
-                    side=order["side"],
-                    quantity=fill["quantity"],
-                    fill_price=fill_price,
-                    net_value=net_value,
-                    realised_profit_loss=realised_profit_loss,
-                    fees=fees,
-                    currency=target_currency,
-                    filled_at=filled_at,
-                )
+            order_fill = OrderFill(
+                id=fill_id,
+                order_id=str(order["id"]),
+                ticker=order["ticker"],
+                side=order["side"],
+                quantity=fill["quantity"],
+                source_price=source_price,
+                source_currency=source_currency,
+                fill_price=fill_price,
+                net_value=net_value,
+                realised_profit_loss=realised_profit_loss,
+                fees=fees,
+                currency=target_currency,
+                filled_at=filled_at,
             )
-            existing_ids.add(fill_id)
+            session.add(order_fill)
+            existing_fills[fill_id] = order_fill
             added += 1
         cursor = _extract_cursor(page.get("nextPagePath"))
         if cursor is None:
@@ -144,6 +159,76 @@ def sync_dividends(session: Session, client: Trading212Client, max_pages: int | 
     return added
 
 
+def sync_native_price_backfill(
+    session: Session, client: Trading212Client, max_pages: int = NATIVE_PRICE_BACKFILL_PAGES
+) -> bool:
+    """Populate native quotes for historical fills in resumable rate-safe batches.
+
+    Earlier app versions persisted only account-currency-normalized prices.
+    A source-price refresh therefore needs every historical order page. Its
+    cursor is committed after each page so a Trading212 rate limit cannot roll
+    back prior progress or make the next scheduled run restart at page one.
+    Returns ``True`` only once the complete backfill has finished.
+    """
+    if session.query(OrderFill.id).first() is None:
+        # New databases get native quotes during their regular initial order
+        # import, so there is nothing separate to backfill.
+        return True
+
+    state = session.get(HistorySyncState, NATIVE_PRICE_BACKFILL_SOURCE)
+    if state is not None and state.continuation_cursor is None:
+        return True
+
+    if state is None:
+        has_missing_native_price = (
+            session.query(OrderFill)
+            .filter((OrderFill.source_price.is_(None)) | (OrderFill.source_currency.is_(None)))
+            .first()
+            is not None
+        )
+        if not has_missing_native_price:
+            session.add(HistorySyncState(source=NATIVE_PRICE_BACKFILL_SOURCE))
+            session.commit()
+            return True
+        cursor: int | None = None
+    else:
+        cursor = int(state.continuation_cursor) if state.continuation_cursor is not None else None
+
+    for _ in range(max_pages):
+        try:
+            page = client.get_historical_orders(cursor=cursor, limit=HISTORY_PAGE_SIZE)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                # Earlier page updates have already been committed. Leave the
+                # saved cursor intact and continue on the next scheduler run.
+                return False
+            raise
+        for item in page["items"]:
+            fill = item.get("fill")
+            if fill is None or fill["type"] != "TRADE":
+                continue
+            stored_fill = session.get(OrderFill, str(fill["id"]))
+            if stored_fill is not None and (
+                stored_fill.source_price is None or stored_fill.source_currency is None
+            ):
+                stored_fill.source_price = fill["price"]
+                stored_fill.source_currency = item["order"]["currency"]
+
+        next_cursor = _extract_cursor(page.get("nextPagePath"))
+        if state is None:
+            state = HistorySyncState(source=NATIVE_PRICE_BACKFILL_SOURCE)
+            session.add(state)
+        state.continuation_cursor = str(next_cursor) if next_cursor is not None else None
+        # Persist every page before the next request, which may be throttled.
+        session.commit()
+
+        if next_cursor is None:
+            return True
+        cursor = next_cursor
+
+    return False
+
+
 def _initial_backfill_complete(
     session: Session, source: str, model: type[OrderFill] | type[Dividend]
 ) -> bool:
@@ -174,6 +259,11 @@ def sync_history(session: Session, client: Trading212Client, target_currency: st
     events between successful minute runs while keeping each endpoint within
     its own documented request budget.
     """
+    if not sync_native_price_backfill(session, client):
+        # Reserve the order-history quota for the resumable native-price
+        # backfill. The next scheduled run continues from its saved cursor.
+        return
+
     orders_backfilled = _initial_backfill_complete(session, "orders", OrderFill)
     sync_order_fills(
         session,

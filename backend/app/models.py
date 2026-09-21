@@ -41,6 +41,11 @@ class OrderFill(Base):
     ticker: Mapped[str] = mapped_column(String)
     side: Mapped[str] = mapped_column(String(4))
     quantity: Mapped[float] = mapped_column(Float)
+    # The price and currency as quoted by Trading212 for the instrument.  Keep
+    # these separate from `fill_price`, which is normalized to the account
+    # currency for performance calculations.
+    source_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     fill_price: Mapped[float] = mapped_column(Float)
     net_value: Mapped[float] = mapped_column(Float)
     realised_profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
@@ -63,7 +68,7 @@ class Dividend(Base):
 
 
 class HistorySyncState(Base):
-    """Marks history streams that have completed their one-time full backfill."""
+    """Tracks completion and resumable cursors for one-time history backfills."""
 
     __tablename__ = "history_sync_states"
 
@@ -71,6 +76,7 @@ class HistorySyncState(Base):
     completed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    continuation_cursor: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class WatchlistEntry(Base):

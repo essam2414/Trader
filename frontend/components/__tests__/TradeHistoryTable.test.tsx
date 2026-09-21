@@ -4,7 +4,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { formatCurrency } from "../../lib/format";
+import { formatCurrency, formatInstrumentPrice } from "../../lib/format";
 import type { Trade } from "../../lib/types";
 import { TradeHistoryTable } from "../TradeHistoryTable";
 
@@ -12,8 +12,10 @@ const TRADE: Trade = {
   ticker: "AAPL_US_EQ",
   quantity: 10.126,
   entryPrice: 100,
+  entryPriceCurrency: "USD",
   entryAt: "2026-01-01T10:00:00Z",
   exitPrice: 110,
+  exitPriceCurrency: "USD",
   exitAt: "2026-01-05T10:00:00Z",
   pnl: 98,
   holdingPeriodHours: 96,
@@ -25,14 +27,15 @@ function makeTrades(count: number): Trade[] {
 
 describe("TradeHistoryTable", () => {
   it("renders a row per trade with entry/exit details and P/L", () => {
-    render(<TradeHistoryTable trades={[TRADE]} currency="USD" />);
+    render(<TradeHistoryTable trades={[TRADE]} currency="GBP" />);
 
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("AAPL_US_EQ")).not.toBeInTheDocument();
     expect(screen.getByText("10.13")).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(100, "USD"))).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(110, "USD"))).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(98, "USD"))).toBeInTheDocument();
+    expect(screen.getByText(formatInstrumentPrice(100, "USD"))).toBeInTheDocument();
+    expect(screen.getByText(formatInstrumentPrice(110, "USD"))).toBeInTheDocument();
+    expect(screen.queryByText("US$100.00")).not.toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(98, "GBP"))).toBeInTheDocument();
     expect(screen.getByText("4.0d")).toBeInTheDocument();
   });
 

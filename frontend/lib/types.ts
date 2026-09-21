@@ -50,8 +50,10 @@ export interface Trade {
   ticker: string;
   quantity: number;
   entryPrice: number;
+  entryPriceCurrency: string;
   entryAt: string;
   exitPrice: number;
+  exitPriceCurrency: string;
   exitAt: string;
   pnl: number;
   holdingPeriodHours: number;

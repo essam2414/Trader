@@ -62,8 +62,10 @@ class TradeOut(BaseModel):
     ticker: str
     quantity: float
     entryPrice: float
+    entryPriceCurrency: str
     entryAt: datetime
     exitPrice: float
+    exitPriceCurrency: str
     exitAt: datetime
     pnl: float
     holdingPeriodHours: float

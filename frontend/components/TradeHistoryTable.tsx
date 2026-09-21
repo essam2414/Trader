@@ -4,7 +4,7 @@
 
 "use client";
 
-import { formatCurrency, formatTicker } from "../lib/format";
+import { formatCurrency, formatInstrumentPrice, formatTicker } from "../lib/format";
 import type { Trade } from "../lib/types";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../lib/usePagination";
@@ -59,11 +59,11 @@ export function TradeHistoryTable({ trades, currency }: { trades: Trade[]; curre
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] sm:text-[16px]">{formatTicker(trade.ticker)}</td>
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] [font-variant-numeric:tabular-nums] sm:text-[16px]">{formatDate(trade.entryAt)}</td>
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] [font-variant-numeric:tabular-nums] sm:text-[16px]">
-                {formatCurrency(trade.entryPrice, currency)}
+                {formatInstrumentPrice(trade.entryPrice, trade.entryPriceCurrency)}
               </td>
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] [font-variant-numeric:tabular-nums] sm:text-[16px]">{formatDate(trade.exitAt)}</td>
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] [font-variant-numeric:tabular-nums] sm:text-[16px]">
-                {formatCurrency(trade.exitPrice, currency)}
+                {formatInstrumentPrice(trade.exitPrice, trade.exitPriceCurrency)}
               </td>
               <td className="px-4 py-3 text-[15px] font-semibold text-[#f5f5f5] [font-variant-numeric:tabular-nums] sm:text-[16px]">
                 {trade.quantity.toFixed(2)}

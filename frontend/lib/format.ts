@@ -13,6 +13,15 @@ export function formatCurrency(value: number, currency: string): string {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(value);
 }
 
+/** Compact native-instrument price presentation, e.g. $100.00 for USD. */
+export function formatInstrumentPrice(value: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+  }).format(value);
+}
+
 /** Compact USD presentation for live watchlist quotes. */
 export function formatWatchlistPrice(value: number): string {
   return new Intl.NumberFormat("en-US", {

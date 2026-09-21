@@ -203,6 +203,8 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
                 ticker="AAPL_US_EQ",
                 side="BUY",
                 quantity=10.0,
+                source_price=100.0,
+                source_currency="USD",
                 fill_price=100.0,
                 net_value=1000.0,
                 realised_profit_loss=0.0,
@@ -216,6 +218,8 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
                 ticker="AAPL_US_EQ",
                 side="SELL",
                 quantity=10.0,
+                source_price=110.0,
+                source_currency="USD",
                 fill_price=110.0,
                 net_value=1100.0,
                 realised_profit_loss=100.0,
@@ -240,7 +244,9 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
     assert trade["ticker"] == "AAPL_US_EQ"
     assert trade["quantity"] == 10.0
     assert trade["entryPrice"] == 100.0
+    assert trade["entryPriceCurrency"] == "USD"
     assert trade["exitPrice"] == 110.0
+    assert trade["exitPriceCurrency"] == "USD"
     assert trade["pnl"] == pytest.approx(100.0)
     assert trade["holdingPeriodHours"] == pytest.approx(96.0)
 
