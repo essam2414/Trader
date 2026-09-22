@@ -23,6 +23,9 @@ FRESH_AFTER_SECONDS = 5 * 60
 PRE_MARKET_OPEN = clock_time(4, 0)
 REGULAR_MARKET_CLOSE = clock_time(16, 0)
 AFTER_HOURS_CLOSE = clock_time(20, 0)
+SPARKLINE_WINDOW = timedelta(hours=24)
+SPARKLINE_TIMEFRAME = "15Min"
+SPARKLINE_REQUEST_LIMIT = 10_000
 
 
 class AlpacaUnavailableError(Exception):
@@ -321,33 +324,64 @@ class AlpacaMarketDataClient:
             symbol: self._decimal(bars[-1]["c"]) for symbol, bars in payload.get("bars", {}).items() if bars
         }
 
-    def _intraday_bars(self, symbols: list[str], session_date: date) -> dict[str, list[SparklinePoint]]:
-        session = self._load_calendar(session_date).get(session_date)
-        if session is None:
+    @staticmethod
+    def _sparkline_bucket(timestamp: datetime) -> datetime:
+        """Round a price timestamp down to its containing 15-minute chart bar."""
+        value = timestamp.astimezone(timezone.utc)
+        return value.replace(minute=value.minute - value.minute % 15, second=0, microsecond=0)
+
+    def _rolling_sparklines(self, symbols: list[str], as_of: datetime) -> dict[str, list[SparklinePoint]]:
+        """Return chronological 15-minute prices across the preceding 24 clock hours."""
+        if not symbols:
             return {}
+        window_end = as_of.astimezone(timezone.utc)
+        window_start = window_end - SPARKLINE_WINDOW
         payload = self._request(
             DATA_BASE_URL,
             "/v2/stocks/bars",
             {
                 "symbols": ",".join(symbols),
-                "timeframe": "5Min",
-                "start": session.opens_at.astimezone(timezone.utc).isoformat(),
-                "end": session.closes_at.astimezone(timezone.utc).isoformat(),
+                "timeframe": SPARKLINE_TIMEFRAME,
+                "start": window_start.isoformat(),
+                "end": window_end.isoformat(),
                 "adjustment": "split",
                 "feed": self.feed,
+                "limit": str(SPARKLINE_REQUEST_LIMIT),
+                "sort": "asc",
             },
         )
         result: dict[str, list[SparklinePoint]] = {}
         for symbol, bars in payload.get("bars", {}).items():
-            points: list[SparklinePoint] = []
+            points_by_timestamp: dict[datetime, SparklinePoint] = {}
             for bar in bars:
                 timestamp = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
-                if session.opens_at <= timestamp.astimezone(NEW_YORK) < session.closes_at:
-                    points.append(SparklinePoint(timestamp, self._decimal(bar["c"])))
-            result[symbol] = points
+                if window_start <= timestamp <= window_end:
+                    points_by_timestamp[timestamp] = SparklinePoint(timestamp, self._decimal(bar["c"]))
+            result[symbol] = [points_by_timestamp[key] for key in sorted(points_by_timestamp)]
         return result
 
-    def get_watchlist_market_data(self, symbols: list[str]) -> dict[str, MarketQuote]:
+    def _with_current_sparkline_price(
+        self,
+        points: list[SparklinePoint],
+        timestamp: datetime,
+        price: Decimal,
+        as_of: datetime,
+    ) -> list[SparklinePoint]:
+        """Overlay the current quote into its bar so a chart ends at the displayed price."""
+        window_start = as_of.astimezone(timezone.utc) - SPARKLINE_WINDOW
+        bucket = self._sparkline_bucket(timestamp)
+        points_by_timestamp = {
+            point.timestamp: point
+            for point in points
+            if window_start <= point.timestamp.astimezone(timezone.utc) <= as_of.astimezone(timezone.utc)
+        }
+        if window_start <= bucket <= as_of.astimezone(timezone.utc):
+            points_by_timestamp[bucket] = SparklinePoint(bucket, price)
+        return [points_by_timestamp[key] for key in sorted(points_by_timestamp)]
+
+    def get_watchlist_market_data(
+        self, symbols: list[str], now: datetime | None = None
+    ) -> dict[str, MarketQuote]:
         if not symbols:
             return {}
         cache_key = tuple(sorted(symbols))
@@ -387,21 +421,14 @@ class AlpacaMarketDataClient:
                         "daily_bar",
                     )
             close_groups: dict[date, list[str]] = {}
-            sparkline_sessions: dict[str, date] = {}
             extended: dict[str, bool] = {}
             for symbol, (_, timestamp, _) in candidates.items():
-                close_session, sparkline_session, is_extended = self._sessions_for_price(timestamp)
+                close_session, _, is_extended = self._sessions_for_price(timestamp)
                 close_groups.setdefault(close_session, []).append(symbol)
-                sparkline_sessions[symbol] = sparkline_session
                 extended[symbol] = is_extended
             closes = {session: self._daily_closes(group, session) for session, group in close_groups.items()}
-            sparkline_groups: dict[date, list[str]] = {}
-            for symbol, session in sparkline_sessions.items():
-                sparkline_groups.setdefault(session, []).append(symbol)
-            intraday = {
-                session: self._intraday_bars(group, session) for session, group in sparkline_groups.items()
-            }
-            now = datetime.now(timezone.utc)
+            as_of = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+            sparklines = self._rolling_sparklines(list(candidates), as_of)
             quotes: dict[str, MarketQuote] = {}
             for session, group in close_groups.items():
                 for symbol in group:
@@ -418,12 +445,16 @@ class AlpacaMarketDataClient:
                         previous_close=previous_close,
                         dollar_change=dollar_change,
                         percent_change=percent_change,
-                        sparkline=intraday[sparkline_sessions[symbol]].get(symbol, []),
+                        sparkline=self._with_current_sparkline_price(
+                            sparklines.get(symbol, []), timestamp, price, as_of
+                        ),
                         feed=self.feed,
                         source_timestamp=timestamp,
                         source_type=source_type,
                         freshness=(
-                            "fresh" if now - timestamp <= timedelta(seconds=FRESH_AFTER_SECONDS) else "stale"
+                            "fresh"
+                            if as_of - timestamp <= timedelta(seconds=FRESH_AFTER_SECONDS)
+                            else "stale"
                         ),
                         is_extended_hours=extended[symbol],
                     )

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { MarketSession, MarketSessionPhase, WatchlistEntry, WatchlistSearchResult } from "../lib/types";
+import { mergeLiveSparklinePrice } from "../lib/watchlistSparkline";
 import { WatchlistItem, type WatchlistMode } from "./WatchlistItem";
 
 const MARKET_SESSION_REFRESH_INTERVAL_MS = 60_000;
@@ -65,6 +66,10 @@ function applyQuoteEvent(entries: WatchlistEntry[], update: WatchlistQuoteEvent)
       ...entry,
       quote: {
         ...entry.quote,
+        sparkline: mergeLiveSparklinePrice(entry.quote.sparkline, {
+          timestamp: update.sourceTimestamp,
+          close: update.price,
+        }),
         price: update.price,
         dollarChange,
         percentChange,

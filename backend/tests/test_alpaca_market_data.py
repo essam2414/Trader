@@ -34,14 +34,20 @@ def test_after_hours_change_uses_the_session_that_closed_before_the_source_price
 
     monkeypatch.setattr(client, "_request", fake_request)
 
-    quote = client.get_watchlist_market_data(["AAPL"])["AAPL"]
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-18T20:10:00+00:00")
+    )["AAPL"]
 
     assert quote.price == 110
     assert quote.previous_close == 108
     assert quote.dollar_change == 2
     assert quote.percent_change == (Decimal("2") / Decimal("108")) * Decimal("100")
     assert quote.is_extended_hours is True
-    assert len(quote.sparkline) == 1
+    assert [(point.timestamp.isoformat(), point.close) for point in quote.sparkline] == [
+        ("2026-09-18T12:00:00+00:00", Decimal("104")),
+        ("2026-09-18T13:30:00+00:00", Decimal("105")),
+        ("2026-09-18T20:00:00+00:00", Decimal("110")),
+    ]
     assert quote.source_timestamp == datetime.fromisoformat("2026-09-18T20:10:00+00:00")
     assert any(params.get("adjustment") == "split" for _, params in requests)
 
@@ -98,6 +104,54 @@ def test_regular_session_price_uses_prior_close_but_current_session_sparkline(mo
     assert previous_close_session.isoformat() == "2026-09-17"
     assert sparkline_session.isoformat() == "2026-09-18"
     assert is_extended is False
+
+
+def test_watchlist_sparkline_uses_15_minute_bars_from_the_preceding_24_hours(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret")
+    requests: list[dict[str, str]] = []
+
+    def fake_request(_base_url: str, path: str, params: dict[str, str]):
+        if path == "/v2/stocks/snapshots":
+            return {"AAPL": {"latestTrade": {"p": 110, "t": "2026-09-18T14:07:00Z"}}}
+        if path == "/v2/calendar":
+            return [
+                {"date": "2026-09-17", "open": "09:30", "close": "16:00"},
+                {"date": "2026-09-18", "open": "09:30", "close": "16:00"},
+            ]
+        requests.append(params)
+        if params["timeframe"] == "1Day":
+            return {"bars": {"AAPL": [{"c": 108}]}}
+        return {
+            "bars": {
+                "AAPL": [
+                    {"t": "2026-09-17T14:00:00Z", "c": 99},
+                    {"t": "2026-09-17T14:15:00Z", "c": 100},
+                    {"t": "2026-09-18T14:00:00Z", "c": 109},
+                    {"t": "2026-09-18T14:15:00Z", "c": 111},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-18T14:07:00+00:00")
+    )["AAPL"]
+
+    sparkline_request = next(params for params in requests if params["timeframe"] == "15Min")
+    assert sparkline_request == {
+        "symbols": "AAPL",
+        "timeframe": "15Min",
+        "start": "2026-09-17T14:07:00+00:00",
+        "end": "2026-09-18T14:07:00+00:00",
+        "adjustment": "split",
+        "feed": "iex",
+        "limit": "10000",
+        "sort": "asc",
+    }
+    assert [(point.timestamp.isoformat(), point.close) for point in quote.sparkline] == [
+        ("2026-09-17T14:15:00+00:00", Decimal("100")),
+        ("2026-09-18T14:00:00+00:00", Decimal("110")),
+    ]
 
 
 def test_symbol_search_prioritizes_exact_and_prefix_ticker_matches(monkeypatch):

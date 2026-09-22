@@ -16,17 +16,17 @@ def test_pre_market_uses_delayed_sip_before_iex_opens():
     assert WatchlistPriceResolver.select_feed(session("pre_market"), now, now) == "delayed_sip"
 
 
-def test_pre_market_uses_iex_after_its_open_when_the_symbol_is_fresh():
+def test_pre_market_uses_iex_after_its_open_even_when_the_symbol_is_quiet():
     now = datetime(2026, 9, 22, 12, tzinfo=timezone.utc)  # 08:00 New York
 
-    assert WatchlistPriceResolver.select_feed(session("pre_market"), now, now) == "iex"
+    assert WatchlistPriceResolver.select_feed(session("pre_market"), now, None) == "iex"
 
 
-def test_iex_silent_extended_hours_symbol_falls_back_to_delayed_sip():
+def test_iex_remains_selected_for_its_extended_hours_window_when_a_symbol_is_quiet():
     now = datetime(2026, 9, 22, 20, 30, tzinfo=timezone.utc)  # 16:30 New York
     stale_iex = datetime(2026, 9, 22, 20, 20, tzinfo=timezone.utc)
 
-    assert WatchlistPriceResolver.select_feed(session("after_hours"), now, stale_iex) == "delayed_sip"
+    assert WatchlistPriceResolver.select_feed(session("after_hours"), now, stale_iex) == "iex"
 
 
 def test_after_hours_uses_delayed_sip_once_iex_has_closed():

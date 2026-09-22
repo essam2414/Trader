@@ -12,32 +12,28 @@ PriceFeed = Literal["iex", "delayed_sip"]
 
 IEX_PRE_MARKET_OPEN = clock_time(8, 0)
 IEX_POST_MARKET_CLOSE = clock_time(17, 0)
-IEX_FRESHNESS = timedelta(minutes=5)
 DELAYED_SIP_FRESHNESS = timedelta(minutes=20)
 
 
 class WatchlistPriceResolver:
     """Hide session and freshness policy behind one source-selection interface.
 
-    IEX remains the immediate source where its exchange is open.  Delayed SIP
-    fills the portions of extended trading where IEX does not operate, plus an
-    IEX-silent symbol in IEX's shorter extended sessions.
+    IEX remains the source throughout its scheduled pre-market and post-market
+    windows. Delayed SIP fills only the portions of extended trading where IEX
+    does not operate.
     """
 
     @staticmethod
     def select_feed(
         session: MarketSessionStatus,
         now: datetime,
-        iex_timestamp: datetime | None,
+        _iex_timestamp: datetime | None,
     ) -> PriceFeed | None:
-        preferred = WatchlistPriceResolver.preferred_feed(session, now)
-        if preferred != "iex" or session.phase == "regular" or _is_fresh(iex_timestamp, now):
-            return preferred
-        return "delayed_sip"
+        return WatchlistPriceResolver.preferred_feed(session, now)
 
     @staticmethod
     def preferred_feed(session: MarketSessionStatus, now: datetime) -> PriceFeed | None:
-        """Return the scheduled source before per-symbol IEX-silence fallback."""
+        """Return the scheduled source for the current market phase."""
         local_now = now.astimezone(NEW_YORK)
         if session.phase == "regular":
             return "iex"
@@ -54,10 +50,3 @@ class WatchlistPriceResolver:
             return False
         age = now - timestamp
         return timedelta(0) <= age <= DELAYED_SIP_FRESHNESS
-
-
-def _is_fresh(timestamp: datetime | None, now: datetime) -> bool:
-    if timestamp is None:
-        return False
-    age = now - timestamp
-    return timedelta(0) <= age <= IEX_FRESHNESS

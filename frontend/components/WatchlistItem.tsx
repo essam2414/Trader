@@ -48,6 +48,15 @@ function trendFor(entry: WatchlistEntry): WatchlistTrend {
   return change > 0 ? "positive" : "negative";
 }
 
+function chartTrendFor(entry: WatchlistEntry): WatchlistTrend {
+  const points = entry.quote.sparkline;
+  if (points.length >= 2) {
+    const movement = points.at(-1)!.close - points[0].close;
+    if (movement !== 0) return movement > 0 ? "positive" : "negative";
+  }
+  return trendFor(entry);
+}
+
 function CachedLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">) {
   const [failedToLoad, setFailedToLoad] = useState(false);
 
@@ -90,6 +99,7 @@ export function WatchlistItem({
   dragStyle,
 }: WatchlistItemProps) {
   const trend = trendFor(entry);
+  const chartTrend = chartTrendFor(entry);
   const percentChange = entry.quote.percentChange;
   const changeClass = trend === "positive" ? "text-[#32e64d]" : trend === "negative" ? "text-[#ff3b45]" : "text-[#8a9298]";
   const changeIndicator = trend === "positive" ? "↗" : trend === "negative" ? "↘" : "–";
@@ -127,7 +137,7 @@ export function WatchlistItem({
       aria-label={mode === "delete" ? `Remove ${entry.symbol}` : undefined}
       tabIndex={mode === "delete" ? 0 : undefined}
       style={dragStyle}
-      className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_80px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-[background-color,opacity,box-shadow] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "shadow-2xl shadow-black/70" : ""}`}
+      className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_104px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-[background-color,opacity,box-shadow] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "shadow-2xl shadow-black/70" : ""}`}
     >
       {mode === "move" && <span aria-hidden="true" className="absolute left-1 top-1/2 -translate-y-1/2 text-xs tracking-[-0.2em] text-neutral-600">⋮⋮</span>}
       <StockLogo name={entry.name} logoUrl={entry.logoUrl} />
@@ -140,7 +150,7 @@ export function WatchlistItem({
         </p>
       </div>
       <div className="justify-self-end">
-        <WatchlistSparkline points={entry.quote.sparkline} trend={trend} />
+        <WatchlistSparkline points={entry.quote.sparkline} trend={chartTrend} />
       </div>
       <div className="min-w-0 text-right font-sans [font-variant-numeric:tabular-nums]">
         <p className="truncate text-[16px] font-semibold leading-tight text-[#f5f5f5] sm:text-[17px]">
