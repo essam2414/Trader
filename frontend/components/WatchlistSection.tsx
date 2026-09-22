@@ -63,8 +63,18 @@ function marketSessionReminder(session: MarketSession | null, unavailable: boole
 
 function marketSessionTone(session: MarketSession | null, unavailable: boolean): string {
   if (unavailable || !session || session.phase === "closed") return "bg-neutral-500";
-  if (session.phase === "regular") return "bg-emerald-400";
-  return "bg-amber-300";
+  if (session.phase === "pre_market") return "bg-orange-400";
+  if (session.phase === "regular") return "bg-green-400";
+  if (session.phase === "after_hours") return "bg-pink-400";
+  return "bg-blue-400";
+}
+
+function marketSessionTextTone(session: MarketSession | null, unavailable: boolean): string {
+  if (unavailable || !session || session.phase === "closed") return "text-neutral-400";
+  if (session.phase === "pre_market") return "text-orange-300";
+  if (session.phase === "regular") return "text-green-300";
+  if (session.phase === "after_hours") return "text-pink-300";
+  return "text-blue-300";
 }
 
 export function WatchlistSection() {
@@ -377,21 +387,22 @@ export function WatchlistSection() {
 
   return (
     <section className="mr-3 flex min-h-0 min-w-0 flex-col pt-6" aria-labelledby="watchlist-heading">
-      <div className="shrink-0 flex flex-nowrap items-start gap-x-2">
-        <div className="min-w-0 shrink-0">
+      <div className="shrink-0 flex flex-nowrap items-start gap-x-8">
+        <div className="relative shrink-0 pb-8">
           <h2 id="watchlist-heading" className="text-xl font-semibold tracking-tight text-neutral-100">Watchlist</h2>
-          <p aria-live="polite" className="mt-2 flex max-w-[300px] items-center gap-1.5 overflow-hidden text-xs text-neutral-400 whitespace-nowrap">
+          <p aria-live="polite" className={`absolute left-0 top-10 flex w-[300px] items-center gap-1.5 overflow-hidden text-sm whitespace-nowrap ${marketSessionTextTone(marketSession, isMarketSessionUnavailable)}`}>
             <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${marketSessionTone(marketSession, isMarketSessionUnavailable)}`} />
             <span className="truncate">{marketSessionReminder(marketSession, isMarketSessionUnavailable)}</span>
           </p>
         </div>
-        {entries.length > 0 && (
-          <div className="flex items-center gap-1">
-            <button type="button" onClick={() => setTableMode(tableMode === "move" ? "default" : "move")} disabled={tableMode === "delete" || isSavingOrder} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "move" ? "bg-neutral-200 text-neutral-950" : "text-neutral-300 hover:bg-neutral-800"}`}>{tableMode === "move" ? "Done" : "Move"}</button>
-            <button type="button" onClick={() => setTableMode(tableMode === "delete" ? "default" : "delete")} disabled={tableMode === "move"} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "delete" ? "bg-rose-400 text-neutral-950" : "text-rose-300 hover:bg-rose-400/10"}`}>{tableMode === "delete" ? "Done" : "Delete"}</button>
-          </div>
-        )}
-        <div ref={searchContainer} className="relative ml-auto w-32 shrink-0">
+        <div className="flex shrink-0 items-center gap-5">
+          {entries.length > 0 && (
+            <>
+              <button type="button" onClick={() => setTableMode(tableMode === "move" ? "default" : "move")} disabled={tableMode === "delete" || isSavingOrder} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "move" ? "bg-neutral-200 text-neutral-950" : "text-neutral-300 hover:bg-neutral-800"}`}>{tableMode === "move" ? "Done" : "Move"}</button>
+              <button type="button" onClick={() => setTableMode(tableMode === "delete" ? "default" : "delete")} disabled={tableMode === "move"} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "delete" ? "bg-rose-400 text-neutral-950" : "text-rose-300 hover:bg-rose-400/10"}`}>{tableMode === "delete" ? "Done" : "Delete"}</button>
+            </>
+          )}
+          <div ref={searchContainer} className="relative w-32">
           <label className="sr-only" htmlFor="watchlist-search">Search US equities</label>
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
           <input id="watchlist-search" role="combobox" aria-expanded={isSearchOpen} aria-controls="watchlist-results" value={query} onChange={(event) => updateSearch(event.target.value)} onFocus={() => { if (query.trim()) setIsSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setIsSearchOpen(false); }} placeholder="Search ticker or company" className="h-8 w-full rounded-xl border border-neutral-700 bg-neutral-950 py-0 pl-10 pr-10 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-500/20" />
@@ -412,12 +423,13 @@ export function WatchlistSection() {
               </ul>}
             </div>
           )}
+          </div>
         </div>
       </div>
-      <div aria-label="Watchlist entries" className="dashboard-pane-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">
+      <div aria-label="Watchlist entries" className="dashboard-pane-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">
         {message && <p role="status" className="rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-300">{message}</p>}
       {isLoading ? <p className="mt-4 text-sm text-neutral-500">Loading watchlist…</p> : entries.length === 0 ? <p className="mt-4 text-sm text-neutral-500">Search for a US equity to begin your watchlist.</p> : (
-        <div className="mt-4 space-y-1">
+        <div className="mt-2 space-y-1">
           {entries.map((entry) => {
             const isDragging = draggedAssetId === entry.assetId;
             const registerEntryElement = (element: HTMLDivElement | null) => {

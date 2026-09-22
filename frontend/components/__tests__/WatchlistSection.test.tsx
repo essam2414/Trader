@@ -67,11 +67,23 @@ describe("WatchlistSection search", () => {
     expect(screen.getByText("$136.01")).toBeInTheDocument();
     expect(container.querySelector("table")).not.toBeInTheDocument();
     expect(screen.queryByText("Regular session")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Watchlist entries")).toHaveClass("overflow-y-auto");
+    expect(screen.getByLabelText("Watchlist entries")).toHaveClass("mt-2", "overflow-y-auto");
+    expect(screen.getByText("ServiceNow").closest(".space-y-1")).toHaveClass("mt-2");
     expect(screen.getByLabelText("Watchlist")).toHaveClass("flex-col");
     expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement?.parentElement).toHaveClass("flex-nowrap");
+    expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement?.parentElement).toHaveClass("gap-x-8");
+    expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement).toHaveClass("relative");
+    expect(screen.getByText("US market schedule unavailable").parentElement).toHaveClass("top-10", "text-sm");
     expect(screen.getByRole("combobox", { name: /search us equities/i }).parentElement).toHaveClass(
       "w-32",
+    );
+    expect(screen.getByRole("combobox", { name: /search us equities/i }).parentElement).not.toHaveClass(
+      "ml-auto",
+    );
+    expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement?.nextElementSibling)
+      .toContainElement(screen.getByRole("combobox", { name: /search us equities/i }));
+    expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement?.nextElementSibling).toHaveClass(
+      "gap-5",
     );
     expect(screen.getByRole("combobox", { name: /search us equities/i })).toHaveClass("h-8");
   });
@@ -98,6 +110,36 @@ describe("WatchlistSection search", () => {
 
     const reminder = await screen.findByText("US regular hours · closes 21:00 UK");
     expect(reminder.parentElement).toHaveClass("whitespace-nowrap");
+  });
+
+  it.each([
+    ["pre_market", "pre-market", "bg-orange-400", "text-orange-300"],
+    ["regular", "regular hours", "bg-green-400", "text-green-300"],
+    ["after_hours", "after-hours", "bg-pink-400", "text-pink-300"],
+    ["overnight", "overnight", "bg-blue-400", "text-blue-300"],
+  ])("uses the requested colour for %s session", async (phase, label, dotColour, textColour) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) => Promise.resolve({
+        ok: true,
+        json: async () => input === "/api/market-session"
+          ? {
+              phase,
+              asOf: "2026-09-18T14:00:00Z",
+              endsAt: "2026-09-18T20:00:00Z",
+              nextPhase: "after_hours",
+              nextPhaseStartsAt: "2026-09-18T20:00:00Z",
+              isEarlyClose: false,
+            }
+          : [],
+      })),
+    );
+
+    render(<WatchlistSection />);
+
+    const reminder = await screen.findByText(new RegExp(`US ${label}`));
+    expect(reminder.parentElement).toHaveClass(textColour);
+    expect(reminder.parentElement?.querySelector("[aria-hidden='true']")).toHaveClass(dotColour);
   });
 
   it("moves the dragged row itself while the other rows reorder", async () => {
