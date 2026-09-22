@@ -29,18 +29,18 @@ export function PositionsTable({ positions, currency }: { positions: Position[];
           {positions.map((position) => (
             <tr key={position.ticker} className="transition-colors hover:bg-neutral-800/40">
               <td className="px-4 py-3 font-medium text-neutral-100">{position.ticker}</td>
-              <td className="px-4 py-3 font-mono text-neutral-300">{position.quantity}</td>
-              <td className="px-4 py-3 font-mono text-neutral-300">
+              <td className="px-4 py-3 text-neutral-300 [font-variant-numeric:tabular-nums]">{position.quantity}</td>
+              <td className="px-4 py-3 text-neutral-300 [font-variant-numeric:tabular-nums]">
                 {formatCurrency(position.averagePricePaid, position.currency)}
               </td>
-              <td className="px-4 py-3 font-mono text-neutral-300">
+              <td className="px-4 py-3 text-neutral-300 [font-variant-numeric:tabular-nums]">
                 {formatCurrency(position.currentPrice, position.currency)}
               </td>
-              <td className="px-4 py-3 font-mono text-neutral-300">
+              <td className="px-4 py-3 text-neutral-300 [font-variant-numeric:tabular-nums]">
                 {formatCurrency(position.currentValue, currency)}
               </td>
               <td
-                className={`px-4 py-3 font-mono ${position.unrealizedProfitLoss >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+                className={`px-4 py-3 [font-variant-numeric:tabular-nums] ${position.unrealizedProfitLoss > 0 ? "text-[#32e64d]" : position.unrealizedProfitLoss < 0 ? "text-[#ff3b45]" : "text-neutral-100"}`}
               >
                 {formatCurrency(position.unrealizedProfitLoss, currency)}
               </td>

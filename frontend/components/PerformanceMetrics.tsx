@@ -23,14 +23,14 @@ function formatRatio(value: number | null): string {
 
 function ratioColor(value: number | null): string {
   if (value === null) return "text-neutral-100";
-  return value >= 1 ? "text-emerald-400" : "text-rose-400";
+  return value >= 1 ? "text-[#32e64d]" : "text-[#ff3b45]";
 }
 
 function Tile({ label, value, valueClassName = "text-neutral-100" }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div className="p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</p>
-      <p className={`mt-1 font-mono text-2xl font-semibold ${valueClassName}`}>{value}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">{label}</p>
+      <p className={`mt-2 text-2xl font-semibold tracking-tight [font-variant-numeric:tabular-nums] ${valueClassName}`}>{value}</p>
     </div>
   );
 }
@@ -50,7 +50,7 @@ export function PerformanceMetrics({
       <Tile
         label="Realized P/L"
         value={formatCurrency(metrics.realizedPnl, currency)}
-        valueClassName={isProfit ? "text-emerald-400" : "text-rose-400"}
+        valueClassName={isProfit ? "text-[#32e64d]" : "text-[#ff3b45]"}
       />
       <Tile label="Win rate" value={formatPercent(metrics.winRate)} />
       <Tile label="Expectancy" value={formatCurrency(metrics.expectancy, currency)} />

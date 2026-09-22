@@ -69,6 +69,35 @@ describe("WatchlistSection search", () => {
     expect(screen.queryByText("Regular session")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Watchlist entries")).toHaveClass("overflow-y-auto");
     expect(screen.getByLabelText("Watchlist")).toHaveClass("flex-col");
+    expect(screen.getByRole("heading", { name: "Watchlist" }).parentElement?.parentElement).toHaveClass("flex-nowrap");
+    expect(screen.getByRole("combobox", { name: /search us equities/i }).parentElement).toHaveClass(
+      "w-32",
+    );
+    expect(screen.getByRole("combobox", { name: /search us equities/i })).toHaveClass("h-8");
+  });
+
+  it("shows the current US market session beneath the watchlist heading in one line", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) => Promise.resolve({
+        ok: true,
+        json: async () => input === "/api/market-session"
+          ? {
+              phase: "regular",
+              asOf: "2026-09-18T14:00:00Z",
+              endsAt: "2026-09-18T20:00:00Z",
+              nextPhase: "after_hours",
+              nextPhaseStartsAt: "2026-09-18T20:00:00Z",
+              isEarlyClose: false,
+            }
+          : [],
+      })),
+    );
+
+    render(<WatchlistSection />);
+
+    const reminder = await screen.findByText("US regular hours · closes 21:00 UK");
+    expect(reminder.parentElement).toHaveClass("whitespace-nowrap");
   });
 
   it("moves the dragged row itself while the other rows reorder", async () => {

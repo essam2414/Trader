@@ -6,7 +6,7 @@ frontend-facing JSON contract for the portfolio router.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -140,6 +140,15 @@ class WatchlistEntryOut(BaseModel):
     addedAt: datetime
     logoUrl: str
     quote: WatchlistQuoteOut
+
+
+class MarketSessionOut(BaseModel):
+    phase: Literal["pre_market", "regular", "after_hours", "overnight", "closed"]
+    asOf: datetime
+    endsAt: datetime | None
+    nextPhase: Literal["pre_market", "regular", "after_hours", "overnight"] | None
+    nextPhaseStartsAt: datetime | None
+    isEarlyClose: bool
 
 
 class NewsArticleOut(BaseModel):

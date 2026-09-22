@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import type { WatchlistEntry, WatchlistSearchResult } from "../lib/types";
+import type { MarketSession, MarketSessionPhase, WatchlistEntry, WatchlistSearchResult } from "../lib/types";
 import { WatchlistItem, type WatchlistMode } from "./WatchlistItem";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -16,6 +16,57 @@ type DragState = {
   y: number;
 };
 
+const londonTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const londonDayAndTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const phaseLabels: Record<Exclude<MarketSessionPhase, "closed">, string> = {
+  pre_market: "pre-market",
+  regular: "regular hours",
+  after_hours: "after-hours",
+  overnight: "overnight",
+};
+
+function isMarketSession(value: unknown): value is MarketSession {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && "phase" in value
+      && ["pre_market", "regular", "after_hours", "overnight", "closed"].includes(
+        String(value.phase),
+      ),
+  );
+}
+
+function marketSessionReminder(session: MarketSession | null, unavailable: boolean): string {
+  if (unavailable) return "US market schedule unavailable";
+  if (!session) return "Loading US market session…";
+  if (session.phase === "closed") {
+    if (!session.nextPhase || !session.nextPhaseStartsAt) return "US market closed";
+    return `US market closed · ${phaseLabels[session.nextPhase]} ${londonDayAndTime.format(new Date(session.nextPhaseStartsAt))} UK`;
+  }
+  if (!session.endsAt) return `US ${phaseLabels[session.phase]}`;
+  const verb = session.phase === "regular" ? (session.isEarlyClose ? "early close" : "closes") : "ends";
+  return `US ${phaseLabels[session.phase]} · ${verb} ${londonTime.format(new Date(session.endsAt))} UK`;
+}
+
+function marketSessionTone(session: MarketSession | null, unavailable: boolean): string {
+  if (unavailable || !session || session.phase === "closed") return "bg-neutral-500";
+  if (session.phase === "regular") return "bg-emerald-400";
+  return "bg-amber-300";
+}
+
 export function WatchlistSection() {
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
   const [query, setQuery] = useState("");
@@ -28,6 +79,8 @@ export function WatchlistSection() {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [marketSession, setMarketSession] = useState<MarketSession | null>(null);
+  const [isMarketSessionUnavailable, setIsMarketSessionUnavailable] = useState(false);
   const listRequest = useRef(0);
   const searchRequest = useRef(0);
   const searchAbort = useRef<AbortController | null>(null);
@@ -80,16 +133,37 @@ export function WatchlistSection() {
     }
   }, []);
 
+  const loadMarketSession = useCallback(async () => {
+    try {
+      const response = await fetch("/api/market-session", { cache: "no-store" });
+      const body: unknown = await response.json();
+      if (!response.ok || !isMarketSession(body)) {
+        setIsMarketSessionUnavailable(true);
+        return;
+      }
+      setMarketSession(body);
+      setIsMarketSessionUnavailable(false);
+    } catch {
+      setIsMarketSessionUnavailable(true);
+    }
+  }, []);
+
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadWatchlist(), 0);
+    const initialLoad = window.setTimeout(() => {
+      void loadWatchlist();
+      void loadMarketSession();
+    }, 0);
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadWatchlist();
+      if (document.visibilityState === "visible") {
+        void loadWatchlist();
+        void loadMarketSession();
+      }
     }, POLL_INTERVAL_MS);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
     };
-  }, [loadWatchlist]);
+  }, [loadMarketSession, loadWatchlist]);
 
   useEffect(() => {
     const closeWhenClickingAway = (event: PointerEvent) => {
@@ -303,18 +377,24 @@ export function WatchlistSection() {
 
   return (
     <section className="mr-3 flex min-h-0 min-w-0 flex-col pt-6" aria-labelledby="watchlist-heading">
-      <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-3">
-        <h2 id="watchlist-heading" className="text-xl font-semibold tracking-tight text-neutral-100">Watchlist</h2>
+      <div className="shrink-0 flex flex-nowrap items-start gap-x-2">
+        <div className="min-w-0 shrink-0">
+          <h2 id="watchlist-heading" className="text-xl font-semibold tracking-tight text-neutral-100">Watchlist</h2>
+          <p aria-live="polite" className="mt-2 flex max-w-[300px] items-center gap-1.5 overflow-hidden text-xs text-neutral-400 whitespace-nowrap">
+            <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${marketSessionTone(marketSession, isMarketSessionUnavailable)}`} />
+            <span className="truncate">{marketSessionReminder(marketSession, isMarketSessionUnavailable)}</span>
+          </p>
+        </div>
         {entries.length > 0 && (
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setTableMode(tableMode === "move" ? "default" : "move")} disabled={tableMode === "delete" || isSavingOrder} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "move" ? "bg-neutral-200 text-neutral-950" : "text-neutral-300 hover:bg-neutral-800"}`}>{tableMode === "move" ? "Done" : "Move"}</button>
             <button type="button" onClick={() => setTableMode(tableMode === "delete" ? "default" : "delete")} disabled={tableMode === "move"} className={`rounded-lg px-2 py-1.5 text-sm font-medium transition ${tableMode === "delete" ? "bg-rose-400 text-neutral-950" : "text-rose-300 hover:bg-rose-400/10"}`}>{tableMode === "delete" ? "Done" : "Delete"}</button>
           </div>
         )}
-        <div ref={searchContainer} className="relative order-3 w-full min-[700px]:order-none min-[700px]:ml-auto min-[700px]:w-52">
+        <div ref={searchContainer} className="relative ml-auto w-32 shrink-0">
           <label className="sr-only" htmlFor="watchlist-search">Search US equities</label>
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-          <input id="watchlist-search" role="combobox" aria-expanded={isSearchOpen} aria-controls="watchlist-results" value={query} onChange={(event) => updateSearch(event.target.value)} onFocus={() => { if (query.trim()) setIsSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setIsSearchOpen(false); }} placeholder="Search ticker or company" className="h-10 w-full rounded-xl border border-neutral-700 bg-neutral-950 py-0 pl-10 pr-10 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-500/20" />
+          <input id="watchlist-search" role="combobox" aria-expanded={isSearchOpen} aria-controls="watchlist-results" value={query} onChange={(event) => updateSearch(event.target.value)} onFocus={() => { if (query.trim()) setIsSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setIsSearchOpen(false); }} placeholder="Search ticker or company" className="h-8 w-full rounded-xl border border-neutral-700 bg-neutral-950 py-0 pl-10 pr-10 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-500/20" />
           {query && <button type="button" onClick={() => updateSearch("")} aria-label="Clear search" className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
           {isSearchOpen && (
             <div id="watchlist-results" role="listbox" className="absolute z-10 mt-2 w-full overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950 shadow-2xl shadow-black/50">

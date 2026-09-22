@@ -45,7 +45,7 @@ export function LiveDashboardAccountSummary({ initialAccount }: { initialAccount
       : "text-neutral-100";
 
   return (
-    <section className="flex h-[72px] items-start gap-10 sm:gap-14" aria-label="Account overview">
+    <section className="flex h-[72px] items-start justify-around gap-12" aria-label="Account overview">
       <article className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Total account value</p>
         <p className="mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight text-neutral-100 [font-variant-numeric:tabular-nums]">
@@ -53,11 +53,17 @@ export function LiveDashboardAccountSummary({ initialAccount }: { initialAccount
         </p>
       </article>
       <article className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Cash available</p>
+        <p className="mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight text-neutral-100 [font-variant-numeric:tabular-nums]">
+          {formatCurrency(account.cash.availableToTrade, account.currency)}
+        </p>
+      </article>
+      <article className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Unrealised P/L</p>
         <p
           className={`mt-2 text-[clamp(2rem,3vw,2.5rem)] font-semibold tracking-tight [font-variant-numeric:tabular-nums] ${unrealizedClassName}`}
         >
-          {formatCurrency(account.unrealizedProfitLoss, account.currency)}
+          {formatCurrency(Math.abs(account.unrealizedProfitLoss), account.currency)}
         </p>
       </article>
       <article className="min-w-0">

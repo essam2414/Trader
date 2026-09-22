@@ -124,6 +124,17 @@ export interface WatchlistEntry {
   quote: WatchlistQuote;
 }
 
+export type MarketSessionPhase = "pre_market" | "regular" | "after_hours" | "overnight" | "closed";
+
+export interface MarketSession {
+  phase: MarketSessionPhase;
+  asOf: string;
+  endsAt: string | null;
+  nextPhase: Exclude<MarketSessionPhase, "closed"> | null;
+  nextPhaseStartsAt: string | null;
+  isEarlyClose: boolean;
+}
+
 export interface NewsArticle {
   id: number;
   headline: string;

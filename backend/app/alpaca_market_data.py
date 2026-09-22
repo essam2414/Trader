@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from datetime import time as clock_time
 from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
@@ -19,6 +20,9 @@ TICKER_LOGO_BASE_URL = "https://api.eulerpool.com/api/1/logo/ticker"
 CATALOG_TTL_SECONDS = 24 * 60 * 60
 QUOTE_TTL_SECONDS = 60
 FRESH_AFTER_SECONDS = 5 * 60
+PRE_MARKET_OPEN = clock_time(4, 0)
+REGULAR_MARKET_CLOSE = clock_time(16, 0)
+AFTER_HOURS_CLOSE = clock_time(20, 0)
 
 
 class AlpacaUnavailableError(Exception):
@@ -43,6 +47,26 @@ class SparklinePoint:
 class TradingSession:
     opens_at: datetime
     closes_at: datetime
+
+
+@dataclass(frozen=True)
+class MarketSessionStatus:
+    """The current US equity trading phase and its next scheduled transition."""
+
+    phase: str
+    as_of: datetime
+    ends_at: datetime | None
+    next_phase: str | None
+    next_phase_starts_at: datetime | None
+    is_early_close: bool
+
+
+@dataclass(frozen=True)
+class _ScheduledMarketPhase:
+    phase: str
+    starts_at: datetime
+    ends_at: datetime
+    is_early_close: bool = False
 
 
 @dataclass(frozen=True)
@@ -183,7 +207,7 @@ class AlpacaMarketDataClient:
         if self._calendar_loaded_for == around:
             return self._calendar
         start = around - timedelta(days=14)
-        end = around + timedelta(days=1)
+        end = around + timedelta(days=14)
         payload = self._request(
             TRADING_BASE_URL,
             "/v2/calendar",
@@ -202,6 +226,61 @@ class AlpacaMarketDataClient:
             )
         self._calendar_loaded_for = around
         return self._calendar
+
+    @staticmethod
+    def _at_new_york_time(session_date: date, value: clock_time) -> datetime:
+        return datetime.combine(session_date, value, tzinfo=NEW_YORK)
+
+    def get_market_session(self, now: datetime | None = None) -> MarketSessionStatus:
+        """Return the current US equity market phase from Alpaca's exchange calendar.
+
+        The calendar is the source of truth for holidays and regular-session early closes.
+        Overnight is only scheduled when its following regular trading date appears in that
+        calendar, so it is suppressed before a market holiday.
+        """
+        as_of = (now or datetime.now(timezone.utc)).astimezone(NEW_YORK)
+        calendar = self._load_calendar(as_of.date())
+        phases: list[_ScheduledMarketPhase] = []
+
+        for session_date, session in calendar.items():
+            overnight_start = self._at_new_york_time(session_date - timedelta(days=1), AFTER_HOURS_CLOSE)
+            pre_market_start = self._at_new_york_time(session_date, PRE_MARKET_OPEN)
+            is_early_close = session.closes_at.timetz().replace(tzinfo=None) < REGULAR_MARKET_CLOSE
+            phases.extend(
+                [
+                    _ScheduledMarketPhase("overnight", overnight_start, pre_market_start),
+                    _ScheduledMarketPhase("pre_market", pre_market_start, session.opens_at),
+                    _ScheduledMarketPhase(
+                        "regular", session.opens_at, session.closes_at, is_early_close=is_early_close
+                    ),
+                ]
+            )
+            if not is_early_close:
+                after_hours_end = self._at_new_york_time(session_date, AFTER_HOURS_CLOSE)
+                phases.append(_ScheduledMarketPhase("after_hours", session.closes_at, after_hours_end))
+
+        phases.sort(key=lambda phase: phase.starts_at)
+        active_phase = next((phase for phase in phases if phase.starts_at <= as_of < phase.ends_at), None)
+        if active_phase is not None:
+            next_phase = next((phase for phase in phases if phase.starts_at >= active_phase.ends_at), None)
+            return MarketSessionStatus(
+                phase=active_phase.phase,
+                as_of=as_of,
+                ends_at=active_phase.ends_at,
+                next_phase=next_phase.phase if next_phase else None,
+                next_phase_starts_at=next_phase.starts_at if next_phase else None,
+                is_early_close=active_phase.is_early_close,
+            )
+
+        next_phase = next((phase for phase in phases if phase.starts_at > as_of), None)
+        return MarketSessionStatus(
+            phase="closed",
+            as_of=as_of,
+            ends_at=None,
+            next_phase=next_phase.phase if next_phase else None,
+            next_phase_starts_at=next_phase.starts_at if next_phase else None,
+            is_early_close=False,
+        )
 
     def _sessions_for_price(self, source_timestamp: datetime) -> tuple[date, date, bool]:
         timestamp = source_timestamp.astimezone(NEW_YORK)
