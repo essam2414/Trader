@@ -19,8 +19,8 @@ export function Pagination({
   onNext: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between border-t border-zinc-800 px-4 py-3">
-      <p className="font-mono text-xs text-zinc-500">
+    <div className="flex items-center justify-between border-t border-neutral-800 px-4 py-3">
+      <p className="font-mono text-xs text-neutral-500">
         {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {totalCount.toLocaleString()}
       </p>
       <div className="flex gap-2">
@@ -28,7 +28,7 @@ export function Pagination({
           type="button"
           onClick={onPrev}
           disabled={!canGoPrev}
-          className="rounded-md border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-amber-500/50 hover:text-amber-400 disabled:pointer-events-none disabled:opacity-30"
+          className="rounded-md border border-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:border-neutral-100/50 hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
         >
           Previous
         </button>
@@ -36,7 +36,7 @@ export function Pagination({
           type="button"
           onClick={onNext}
           disabled={!canGoNext}
-          className="rounded-md border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-amber-500/50 hover:text-amber-400 disabled:pointer-events-none disabled:opacity-30"
+          className="rounded-md border border-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:border-neutral-100/50 hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
         >
           Next
         </button>

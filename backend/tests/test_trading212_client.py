@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from app.rate_limiter import RateLimiter
+from app.rate_limiter import RateLimiter, Trading212RateLimiter
 from app.trading212 import Trading212Client
 
 BASE_URL = "https://live.trading212.com/api/v0"
@@ -105,9 +105,9 @@ def test_get_historical_orders_returns_items_and_next_page_path():
 
 
 @respx.mock
-def test_get_historical_orders_sends_cursor_as_query_param():
+def test_get_historical_orders_sends_cursor_and_max_page_size_as_query_params():
     """When given a cursor, get_historical_orders should send it as a query param."""
-    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2"}).mock(
+    route = respx.get(f"{BASE_URL}/equity/history/orders", params={"cursor": "2", "limit": "50"}).mock(
         return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
     )
     client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL)
@@ -168,8 +168,10 @@ def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
         return_value=httpx.Response(200, json={"items": [], "nextPagePath": None})
     )
     fake_limiter = MagicMock()
-    fake_limiter.__enter__ = MagicMock(return_value=fake_limiter)
-    fake_limiter.__exit__ = MagicMock(return_value=False)
+    request_limiter = MagicMock()
+    request_limiter.__enter__ = MagicMock(return_value=request_limiter)
+    request_limiter.__exit__ = MagicMock(return_value=False)
+    fake_limiter.limit.return_value = request_limiter
     client = Trading212Client(
         api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=fake_limiter
     )
@@ -179,8 +181,15 @@ def test_each_api_call_acquires_the_rate_limiter_when_one_is_provided():
     client.get_historical_orders()
     client.get_dividends()
 
-    assert fake_limiter.__enter__.call_count == 4
-    assert fake_limiter.__exit__.call_count == 4
+    assert fake_limiter.limit.call_count == 4
+    assert [call.args[0] for call in fake_limiter.limit.call_args_list] == [
+        "/equity/account/summary",
+        "/equity/positions",
+        "/equity/history/orders",
+        "/equity/history/dividends",
+    ]
+    assert request_limiter.__enter__.call_count == 4
+    assert request_limiter.__exit__.call_count == 4
 
 
 @respx.mock
@@ -205,7 +214,7 @@ def test_shared_rate_limiter_prevents_concurrent_requests_across_threads():
         return httpx.Response(200, json={"currency": "USD", "totalValue": 0, "cash": {}, "investments": {}})
 
     respx.get(f"{BASE_URL}/equity/account/summary").mock(side_effect=slow_response)
-    limiter = RateLimiter(max_calls=100, period=60.0)
+    limiter = Trading212RateLimiter({"/equity/account/summary": RateLimiter(max_calls=100, period=60.0)})
     client = Trading212Client(api_key="key", api_secret="secret", base_url=BASE_URL, rate_limiter=limiter)
 
     threads = [threading.Thread(target=client.get_account_summary) for _ in range(5)]

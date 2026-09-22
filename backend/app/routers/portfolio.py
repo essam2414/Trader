@@ -5,12 +5,15 @@ live from Trading212) and the historical equity-curve data (stored
 PortfolioSnapshot rows). All routes require the shared dashboard API key.
 """
 
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..auth import require_api_key
-from ..dependencies import get_db, get_trading212_client
+from ..dependencies import get_db, get_portfolio_current_cache, get_trading212_client
 from ..models import Dividend, OrderFill, PortfolioSnapshot
 from ..schemas import (
     AccountSummary,
@@ -23,49 +26,70 @@ from ..schemas import (
     TradeOut,
 )
 from ..services.metrics import compute_portfolio_metrics
+from ..services.portfolio_current import PortfolioCurrentCache
 from ..trading212 import Trading212Client
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 @router.get("/portfolio/current", response_model=PortfolioCurrent)
-def get_current_portfolio(client: Trading212Client = Depends(get_trading212_client)) -> PortfolioCurrent:
+def get_current_portfolio(
+    client: Trading212Client = Depends(get_trading212_client),
+    cache: PortfolioCurrentCache = Depends(get_portfolio_current_cache),
+    db: Session = Depends(get_db),
+) -> PortfolioCurrent:
     """Fetch the live account summary and open positions from Trading212.
 
     Translates any Trading212 connection/auth failure into a 502 so the frontend
     can show a clear "Trading212 isn't connected" message instead of an opaque 500.
     """
-    try:
+
+    def load() -> PortfolioCurrent:
         summary = client.get_account_summary()
         positions = client.get_positions()
+        london_now = datetime.now(ZoneInfo("Europe/London"))
+        week_start = (london_now - timedelta(days=london_now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        week_start_utc = week_start.astimezone(timezone.utc)
+        weekly_realized_profit_loss = sum(
+            fill.realised_profit_loss
+            for fill in db.query(OrderFill)
+            .filter(OrderFill.side == "SELL", OrderFill.filled_at >= week_start_utc)
+            .all()
+        )
+        return PortfolioCurrent(
+            account=AccountSummary(
+                id=summary["id"],
+                currency=summary["currency"],
+                totalValue=summary["totalValue"],
+                cash=CashBreakdown(**summary["cash"]),
+                unrealizedProfitLoss=summary["investments"]["unrealizedProfitLoss"],
+                realizedProfitLoss=summary["investments"]["realizedProfitLoss"],
+                weeklyRealizedProfitLoss=weekly_realized_profit_loss,
+            ),
+            positions=[
+                Position(
+                    ticker=p["instrument"]["ticker"],
+                    name=p["instrument"]["name"],
+                    currency=p["instrument"]["currency"],
+                    quantity=p["quantity"],
+                    averagePricePaid=p["averagePricePaid"],
+                    currentPrice=p["currentPrice"],
+                    currentValue=p["walletImpact"]["currentValue"],
+                    unrealizedProfitLoss=p["walletImpact"]["unrealizedProfitLoss"],
+                )
+                for p in positions
+            ],
+        )
+
+    try:
+        return cache.get(load)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise HTTPException(
             status_code=502,
             detail="Could not connect to Trading212 - check your API credentials.",
         ) from exc
-    return PortfolioCurrent(
-        account=AccountSummary(
-            id=summary["id"],
-            currency=summary["currency"],
-            totalValue=summary["totalValue"],
-            cash=CashBreakdown(**summary["cash"]),
-            unrealizedProfitLoss=summary["investments"]["unrealizedProfitLoss"],
-            realizedProfitLoss=summary["investments"]["realizedProfitLoss"],
-        ),
-        positions=[
-            Position(
-                ticker=p["instrument"]["ticker"],
-                name=p["instrument"]["name"],
-                currency=p["instrument"]["currency"],
-                quantity=p["quantity"],
-                averagePricePaid=p["averagePricePaid"],
-                currentPrice=p["currentPrice"],
-                currentValue=p["walletImpact"]["currentValue"],
-                unrealizedProfitLoss=p["walletImpact"]["unrealizedProfitLoss"],
-            )
-            for p in positions
-        ],
-    )
 
 
 @router.get("/portfolio/history", response_model=list[PortfolioSnapshotOut])
@@ -132,8 +156,10 @@ def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
                 ticker=t.ticker,
                 quantity=t.quantity,
                 entryPrice=t.entry_price,
+                entryPriceCurrency=t.entry_price_currency,
                 entryAt=t.entry_at,
                 exitPrice=t.exit_price,
+                exitPriceCurrency=t.exit_price_currency,
                 exitAt=t.exit_at,
                 pnl=t.pnl,
                 holdingPeriodHours=t.holding_period.total_seconds() / 3600,

@@ -4,16 +4,18 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { formatCurrency } from "../../lib/format";
+import { formatCurrency, formatInstrumentPrice } from "../../lib/format";
 import type { Trade } from "../../lib/types";
 import { TradeHistoryTable } from "../TradeHistoryTable";
 
 const TRADE: Trade = {
   ticker: "AAPL_US_EQ",
-  quantity: 10,
+  quantity: 10.126,
   entryPrice: 100,
+  entryPriceCurrency: "USD",
   entryAt: "2026-01-01T10:00:00Z",
   exitPrice: 110,
+  exitPriceCurrency: "USD",
   exitAt: "2026-01-05T10:00:00Z",
   pnl: 98,
   holdingPeriodHours: 96,
@@ -25,13 +27,15 @@ function makeTrades(count: number): Trade[] {
 
 describe("TradeHistoryTable", () => {
   it("renders a row per trade with entry/exit details and P/L", () => {
-    render(<TradeHistoryTable trades={[TRADE]} currency="USD" />);
+    render(<TradeHistoryTable trades={[TRADE]} currency="GBP" />);
 
-    expect(screen.getByText("AAPL_US_EQ")).toBeInTheDocument();
-    expect(screen.getByText("10")).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(100, "USD"))).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(110, "USD"))).toBeInTheDocument();
-    expect(screen.getByText(formatCurrency(98, "USD"))).toBeInTheDocument();
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.queryByText("AAPL_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("10.13")).toBeInTheDocument();
+    expect(screen.getByText(formatInstrumentPrice(100, "USD"))).toBeInTheDocument();
+    expect(screen.getByText(formatInstrumentPrice(110, "USD"))).toBeInTheDocument();
+    expect(screen.queryByText("US$100.00")).not.toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(98, "GBP"))).toBeInTheDocument();
     expect(screen.getByText("4.0d")).toBeInTheDocument();
   });
 
@@ -41,18 +45,32 @@ describe("TradeHistoryTable", () => {
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
   });
 
+  it("uses the dashboard P/L colours", () => {
+    render(
+      <TradeHistoryTable
+        currency="USD"
+        trades={[TRADE, { ...TRADE, ticker: "LOSS_US_EQ", pnl: -12 }, { ...TRADE, ticker: "EVEN_US_EQ", pnl: 0 }]}
+      />
+    );
+
+    expect(screen.getByText(formatCurrency(98, "USD"))).toHaveClass("text-[#32e64d]");
+    expect(screen.getByText(formatCurrency(12, "USD"))).toHaveClass("text-[#ff3b45]");
+    expect(screen.queryByText(formatCurrency(-12, "USD"))).not.toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(0, "USD"))).toHaveClass("text-neutral-100");
+  });
+
   it("shows only the first 10 rows and reveals the next 10 after clicking Next", () => {
     render(<TradeHistoryTable trades={makeTrades(15)} currency="USD" />);
 
-    expect(screen.getByText("TICK0_US_EQ")).toBeInTheDocument();
-    expect(screen.getByText("TICK9_US_EQ")).toBeInTheDocument();
-    expect(screen.queryByText("TICK10_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("TICK0")).toBeInTheDocument();
+    expect(screen.getByText("TICK9")).toBeInTheDocument();
+    expect(screen.queryByText("TICK10")).not.toBeInTheDocument();
     expect(screen.getByText("1–10 of 15")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    expect(screen.getByText("TICK10_US_EQ")).toBeInTheDocument();
-    expect(screen.getByText("TICK14_US_EQ")).toBeInTheDocument();
-    expect(screen.queryByText("TICK0_US_EQ")).not.toBeInTheDocument();
+    expect(screen.getByText("TICK10")).toBeInTheDocument();
+    expect(screen.getByText("TICK14")).toBeInTheDocument();
+    expect(screen.queryByText("TICK0")).not.toBeInTheDocument();
   });
 });

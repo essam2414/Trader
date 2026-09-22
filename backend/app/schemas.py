@@ -6,6 +6,7 @@ frontend-facing JSON contract for the portfolio router.
 """
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -23,6 +24,7 @@ class AccountSummary(BaseModel):
     cash: CashBreakdown
     unrealizedProfitLoss: float
     realizedProfitLoss: float
+    weeklyRealizedProfitLoss: float
 
 
 class Position(BaseModel):
@@ -60,8 +62,10 @@ class TradeOut(BaseModel):
     ticker: str
     quantity: float
     entryPrice: float
+    entryPriceCurrency: str
     entryAt: datetime
     exitPrice: float
+    exitPriceCurrency: str
     exitAt: datetime
     pnl: float
     holdingPeriodHours: float
@@ -92,3 +96,70 @@ class PortfolioMetricsOut(BaseModel):
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]
     trades: list[TradeOut]
+
+
+class WatchlistSearchResult(BaseModel):
+    assetId: str
+    symbol: str
+    name: str
+    exchange: str
+
+
+class WatchlistAdd(BaseModel):
+    assetId: str
+
+
+class WatchlistOrderUpdate(BaseModel):
+    assetIds: list[str]
+
+
+class SparklinePoint(BaseModel):
+    timestamp: datetime
+    close: float
+
+
+class WatchlistQuoteOut(BaseModel):
+    price: float | None
+    previousClose: float | None
+    dollarChange: float | None
+    percentChange: float | None
+    sparkline: list[SparklinePoint]
+    feed: str
+    sourceTimestamp: datetime | None
+    sourceType: str | None
+    freshness: str
+    isExtendedHours: bool
+    isDelayed: bool
+    delaySeconds: int | None
+
+
+class WatchlistEntryOut(BaseModel):
+    assetId: str
+    symbol: str
+    name: str
+    exchange: str
+    sortOrder: int
+    addedAt: datetime
+    logoUrl: str
+    quote: WatchlistQuoteOut
+
+
+class MarketSessionOut(BaseModel):
+    phase: Literal["pre_market", "regular", "after_hours", "overnight", "closed"]
+    asOf: datetime
+    endsAt: datetime | None
+    nextPhase: Literal["pre_market", "regular", "after_hours", "overnight"] | None
+    nextPhaseStartsAt: datetime | None
+    isEarlyClose: bool
+
+
+class NewsArticleOut(BaseModel):
+    """A unique Alpaca article connected to at least one saved watchlist symbol."""
+
+    id: int
+    headline: str
+    summary: str | None
+    createdAt: datetime
+    updatedAt: datetime
+    watchlistSymbols: list[str]
+    rawData: dict[str, Any]

@@ -14,6 +14,7 @@ export interface AccountSummary {
   cash: CashBreakdown;
   unrealizedProfitLoss: number;
   realizedProfitLoss: number;
+  weeklyRealizedProfitLoss: number;
 }
 
 export interface Position {
@@ -49,8 +50,10 @@ export interface Trade {
   ticker: string;
   quantity: number;
   entryPrice: number;
+  entryPriceCurrency: string;
   entryAt: string;
   exitPrice: number;
+  exitPriceCurrency: string;
   exitAt: string;
   pnl: number;
   holdingPeriodHours: number;
@@ -81,4 +84,65 @@ export interface PortfolioMetrics {
   dividendIncome: number;
   dividendIncomeByTicker: Record<string, number>;
   trades: Trade[];
+}
+
+export interface WatchlistSearchResult {
+  assetId: string;
+  symbol: string;
+  name: string;
+  exchange: string;
+}
+
+export interface SparklinePoint {
+  timestamp: string;
+  close: number;
+}
+
+export type QuoteFreshness = "fresh" | "stale" | "unavailable";
+
+export interface WatchlistQuote {
+  price: number | null;
+  previousClose: number | null;
+  dollarChange: number | null;
+  percentChange: number | null;
+  sparkline: SparklinePoint[];
+  feed: string;
+  sourceTimestamp: string | null;
+  sourceType: string | null;
+  freshness: QuoteFreshness;
+  isExtendedHours: boolean;
+  isDelayed: boolean;
+  delaySeconds: number | null;
+}
+
+export interface WatchlistEntry {
+  assetId: string;
+  symbol: string;
+  name: string;
+  exchange: string;
+  sortOrder: number;
+  addedAt: string;
+  logoUrl: string;
+  quote: WatchlistQuote;
+}
+
+export type MarketSessionPhase = "pre_market" | "regular" | "after_hours" | "overnight" | "closed";
+
+export interface MarketSession {
+  phase: MarketSessionPhase;
+  asOf: string;
+  endsAt: string | null;
+  nextPhase: Exclude<MarketSessionPhase, "closed"> | null;
+  nextPhaseStartsAt: string | null;
+  isEarlyClose: boolean;
+}
+
+export interface NewsArticle {
+  id: number;
+  headline: string;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  watchlistSymbols: string[];
+  rawData: Record<string, unknown>;
 }

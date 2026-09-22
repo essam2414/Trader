@@ -21,7 +21,9 @@ class ClosedTrade:
     ticker: str
     quantity: float
     entry_price: float
+    entry_price_currency: str
     exit_price: float
+    exit_price_currency: str
     entry_at: datetime
     exit_at: datetime
     pnl: float
@@ -64,6 +66,10 @@ def match_trades(fills: list[OrderFill]) -> list[ClosedTrade]:
                     {
                         "quantity": quantity,
                         "price": fill.fill_price,
+                        "source_price": fill.source_price
+                        if fill.source_price is not None
+                        else fill.fill_price,
+                        "source_currency": fill.source_currency or fill.currency,
                         "filled_at": fill.filled_at,
                         "fee_per_unit": fee_per_unit,
                     }
@@ -81,8 +87,12 @@ def match_trades(fills: list[OrderFill]) -> list[ClosedTrade]:
                         ClosedTrade(
                             ticker=ticker,
                             quantity=matched_qty,
-                            entry_price=lot["price"],
-                            exit_price=fill.fill_price,
+                            entry_price=lot["source_price"],
+                            entry_price_currency=lot["source_currency"],
+                            exit_price=fill.source_price
+                            if fill.source_price is not None
+                            else fill.fill_price,
+                            exit_price_currency=fill.source_currency or fill.currency,
                             entry_at=lot["filled_at"],
                             exit_at=fill.filled_at,
                             pnl=pnl,

@@ -299,6 +299,32 @@ def test_compute_portfolio_metrics_aggregates_trades_dividends_and_drawdown():
     assert sum(metrics.exits_by_hour_of_day.values()) == 3
 
 
+def test_compute_portfolio_metrics_recalculates_ticker_performance_after_a_new_closed_trade():
+    fills = [
+        _fill("1", "AAPL_US_EQ", "BUY", 10.0, 100.0, datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        _fill("2", "AAPL_US_EQ", "SELL", 10.0, 110.0, datetime(2026, 1, 2, tzinfo=timezone.utc)),
+    ]
+
+    initial = compute_portfolio_metrics(fills, [], [])
+    initial_aapl = initial.performance_by_ticker[0]
+    assert initial_aapl.realized_pnl == pytest.approx(100.0)
+    assert initial_aapl.trade_count == 1
+    assert initial_aapl.win_rate == pytest.approx(1.0)
+
+    fills.extend(
+        [
+            _fill("3", "AAPL_US_EQ", "BUY", 5.0, 50.0, datetime(2026, 1, 3, tzinfo=timezone.utc)),
+            _fill("4", "AAPL_US_EQ", "SELL", 5.0, 40.0, datetime(2026, 1, 4, tzinfo=timezone.utc)),
+        ]
+    )
+
+    updated = compute_portfolio_metrics(fills, [], [])
+    updated_aapl = updated.performance_by_ticker[0]
+    assert updated_aapl.realized_pnl == pytest.approx(50.0)  # 100 - 50
+    assert updated_aapl.trade_count == 2
+    assert updated_aapl.win_rate == pytest.approx(0.5)
+
+
 def test_compute_portfolio_metrics_handles_no_closed_trades():
     metrics = compute_portfolio_metrics([], [], [])
 

@@ -1,0 +1,32 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - complementary [ref=f1e3]:
+      - link "Invest account" [ref=f1e4] [cursor=pointer]:
+        - /url: /
+        - text: Invest
+      - navigation "Main navigation" [ref=f1e5]:
+        - list [ref=f1e6]:
+          - listitem [ref=f1e7]:
+            - link "Dashboard" [ref=f1e8] [cursor=pointer]:
+              - /url: /dashboard
+          - listitem [ref=f1e11]:
+            - link "Account" [ref=f1e12] [cursor=pointer]:
+              - /url: /
+          - listitem [ref=f1e16]:
+            - link "History" [ref=f1e17] [cursor=pointer]:
+              - /url: /history
+      - navigation "Application settings" [ref=f1e21]:
+        - list [ref=f1e22]:
+          - listitem [ref=f1e23]:
+            - link "Settings" [active] [ref=f1e24] [cursor=pointer]:
+              - /url: /settings
+    - main [ref=f1e66]:
+      - generic [ref=f1e67]:
+        - paragraph [ref=f1e68]: Preferences
+        - heading "Settings" [level=1] [ref=f1e69]
+      - generic [ref=f1e70]:
+        - heading "Session" [level=2] [ref=f1e71]
+        - paragraph [ref=f1e72]: End this session on this device. You will need to enter your PIN to access your account again.
+        - button "Log out" [ref=f1e75]
+  - button "Open Next.js Dev Tools" [ref=f1e53] [cursor=pointer]
+  - alert [ref=f1e57]: Settings

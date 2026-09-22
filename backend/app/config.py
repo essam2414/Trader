@@ -22,8 +22,12 @@ class Settings(BaseSettings):
     trading212_base_url: str = "https://live.trading212.com/api/v0"
     database_url: str = "sqlite:///./dev.db"
     dashboard_api_key: str
+    alpaca_api_key: str | None = None
+    alpaca_api_secret: str | None = None
+    alpaca_data_feed: str = "iex"
+    alpaca_watchlist_limit: int = 20
     snapshot_interval_minutes: int = 15
-    history_sync_interval_minutes: int = 60
+    history_sync_interval_minutes: int = 1
 
 
 settings = Settings()

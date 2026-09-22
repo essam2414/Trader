@@ -1,9 +1,31 @@
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
-/* Subtle amber atmosphere glow behind the page header — restrained on
-   purpose, this is a data-dense dashboard, not a marketing page. */
+/* Minimal monochrome background. */
 body {
-  background-image: radial-gradient(ellipse 70% 40% at 50% -10%, rgba(245, 158, 11, 0.07), transparent 70%);
+  background-image: none;
   background-attachment: fixed;
+  scrollbar-gutter: stable;
+}
+
+.dashboard-pane-scrollbar {
+  scrollbar-color: #525252 transparent;
+  scrollbar-width: thin;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: #525252;
+}
+
+.dashboard-pane-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #737373;
 }

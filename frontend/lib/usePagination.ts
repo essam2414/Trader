@@ -15,6 +15,7 @@ export interface Pagination<T> {
   totalCount: number;
   canGoPrev: boolean;
   canGoNext: boolean;
+  goToFirst: () => void;
   goToPrev: () => void;
   goToNext: () => void;
 }
@@ -41,6 +42,7 @@ export function usePagination<T>(items: T[], pageSize: number): Pagination<T> {
     totalCount: items.length,
     canGoPrev: currentPage > 1,
     canGoNext: currentPage < pageCount,
+    goToFirst: () => setPage(1),
     goToPrev: () => setPage((p) => Math.max(1, p - 1)),
     goToNext: () => setPage((p) => Math.min(pageCount, p + 1)),
   };

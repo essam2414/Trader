@@ -1,7 +1,8 @@
 """Tests for the /api/portfolio routes (current portfolio and history)."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -58,6 +59,99 @@ def test_get_current_portfolio_returns_account_and_positions(client):
     assert body["positions"][0]["unrealizedProfitLoss"] == 147.0
 
 
+def test_get_current_portfolio_includes_this_weeks_realized_pnl_from_sell_fills(client, db_session):
+    """Weekly P/L includes only sell fills since Monday 00:00 London time."""
+    london = ZoneInfo("Europe/London")
+    now = datetime.now(london)
+    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start_utc = week_start.astimezone(timezone.utc)
+    db_session.add_all(
+        [
+            OrderFill(
+                id="weekly-sell",
+                order_id="weekly-sell",
+                ticker="AAPL_US_EQ",
+                side="SELL",
+                quantity=-2.0,
+                fill_price=110.0,
+                net_value=220.0,
+                realised_profit_loss=20.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=week_start_utc + timedelta(hours=1),
+            ),
+            OrderFill(
+                id="weekly-loss",
+                order_id="weekly-loss",
+                ticker="MSFT_US_EQ",
+                side="SELL",
+                quantity=-1.0,
+                fill_price=90.0,
+                net_value=90.0,
+                realised_profit_loss=-5.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=week_start_utc,
+            ),
+            OrderFill(
+                id="previous-week-sell",
+                order_id="previous-week-sell",
+                ticker="NVDA_US_EQ",
+                side="SELL",
+                quantity=-1.0,
+                fill_price=150.0,
+                net_value=150.0,
+                realised_profit_loss=100.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=week_start_utc - timedelta(seconds=1),
+            ),
+            OrderFill(
+                id="weekly-buy",
+                order_id="weekly-buy",
+                ticker="TSLA_US_EQ",
+                side="BUY",
+                quantity=1.0,
+                fill_price=200.0,
+                net_value=200.0,
+                realised_profit_loss=50.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=week_start_utc + timedelta(hours=2),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    fake_client = MagicMock()
+    fake_client.get_account_summary.return_value = FAKE_SUMMARY
+    fake_client.get_positions.return_value = FAKE_POSITIONS
+    app.dependency_overrides[get_trading212_client] = lambda: fake_client
+
+    response = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+
+    del app.dependency_overrides[get_trading212_client]
+    assert response.status_code == 200
+    assert response.json()["account"]["weeklyRealizedProfitLoss"] == pytest.approx(15.0)
+
+
+def test_get_current_portfolio_reuses_a_recent_live_response(client):
+    """A second dashboard render within Trading212's five-second window is immediate."""
+    fake_client = MagicMock()
+    fake_client.get_account_summary.return_value = FAKE_SUMMARY
+    fake_client.get_positions.return_value = FAKE_POSITIONS
+    app.dependency_overrides[get_trading212_client] = lambda: fake_client
+
+    first = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+    second = client.get("/api/portfolio/current", headers=AUTH_HEADER)
+
+    del app.dependency_overrides[get_trading212_client]
+    assert first.status_code == 200
+    assert second.status_code == 200
+    fake_client.get_account_summary.assert_called_once()
+    fake_client.get_positions.assert_called_once()
+
+
 def test_get_current_portfolio_returns_502_when_trading212_unreachable(client):
     """If the Trading212 client fails (bad credentials, network error), the endpoint
     should translate that into a 502 with a clear message, not leak a raw 500."""
@@ -109,6 +203,8 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
                 ticker="AAPL_US_EQ",
                 side="BUY",
                 quantity=10.0,
+                source_price=100.0,
+                source_currency="USD",
                 fill_price=100.0,
                 net_value=1000.0,
                 realised_profit_loss=0.0,
@@ -122,6 +218,8 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
                 ticker="AAPL_US_EQ",
                 side="SELL",
                 quantity=10.0,
+                source_price=110.0,
+                source_currency="USD",
                 fill_price=110.0,
                 net_value=1100.0,
                 realised_profit_loss=100.0,
@@ -146,7 +244,9 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
     assert trade["ticker"] == "AAPL_US_EQ"
     assert trade["quantity"] == 10.0
     assert trade["entryPrice"] == 100.0
+    assert trade["entryPriceCurrency"] == "USD"
     assert trade["exitPrice"] == 110.0
+    assert trade["exitPriceCurrency"] == "USD"
     assert trade["pnl"] == pytest.approx(100.0)
     assert trade["holdingPeriodHours"] == pytest.approx(96.0)
 

@@ -1,0 +1,6 @@
+[     120ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.trading212.com/:0
+[    3365ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.trading212.com/favicon.ico:0
+[    3384ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.trading212.com/favicon.ico:0
+[    5766ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.trading212.com/images/pages/invest/section-multi-currency/section-multi-currency-v14.json:0
+[    5769ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.trading212.com/images/common/section-support/section-support-chat-messages.json:0
+[   30971ms] [LOG] Logging event:  {origin: CookiesNotice, context: handleRejectAllCookies, message: Cookies rejected} @ https://www.trading212.com/_next/static/chunks/pages/_app-401362686dfd764d.js:4

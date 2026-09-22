@@ -3,7 +3,7 @@
 import threading
 import time
 
-from app.rate_limiter import RateLimiter
+from app.rate_limiter import RateLimiter, Trading212RateLimiter
 
 
 def _fake_clock(start: float = 0.0):
@@ -95,3 +95,73 @@ def test_rate_limiter_serializes_concurrent_access():
         t.join()
 
     assert max_concurrent == 1
+
+
+def test_trading212_limiter_applies_account_summary_limit_independently():
+    time_func, advance = _fake_clock()
+    sleeps: list[float] = []
+
+    def sleep_func(seconds: float) -> None:
+        sleeps.append(seconds)
+        advance(seconds)
+
+    limiter = Trading212RateLimiter(
+        {
+            "/equity/account/summary": RateLimiter(1, 5.0, time_func, sleep_func),
+            "/equity/positions": RateLimiter(1, 1.0, time_func, sleep_func),
+        }
+    )
+
+    with limiter.limit("/equity/account/summary"):
+        pass
+    with limiter.limit("/equity/positions"):
+        pass
+    with limiter.limit("/equity/account/summary"):
+        pass
+
+    assert sleeps == [5.0]
+
+
+def test_history_rate_limit_wait_does_not_block_account_summary():
+    """A throttled history scan must not freeze live portfolio refreshes."""
+    history_waiting = threading.Event()
+    allow_history_request = threading.Event()
+    account_summary_completed = threading.Event()
+
+    def wait_for_history_quota(_seconds: float) -> None:
+        history_waiting.set()
+        allow_history_request.wait(timeout=1)
+
+    limiter = Trading212RateLimiter(
+        {
+            "/equity/history/orders": RateLimiter(1, 60.0, sleep_func=wait_for_history_quota),
+            "/equity/account/summary": RateLimiter(10, 60.0),
+        }
+    )
+
+    with limiter.limit("/equity/history/orders"):
+        pass
+
+    history_thread = threading.Thread(target=lambda: _make_limited_request(limiter, "/equity/history/orders"))
+    history_thread.start()
+    assert history_waiting.wait(timeout=0.2)
+
+    account_thread = threading.Thread(
+        target=lambda: _complete_account_summary_request(limiter, account_summary_completed)
+    )
+    account_thread.start()
+
+    assert account_summary_completed.wait(timeout=0.1)
+    allow_history_request.set()
+    history_thread.join(timeout=1)
+    account_thread.join(timeout=1)
+
+
+def _make_limited_request(limiter: Trading212RateLimiter, path: str) -> None:
+    with limiter.limit(path):
+        pass
+
+
+def _complete_account_summary_request(limiter: Trading212RateLimiter, completed: threading.Event) -> None:
+    with limiter.limit("/equity/account/summary"):
+        completed.set()

@@ -1,0 +1,39 @@
+- generic [ref=f3e2]:
+  - complementary [ref=f3e3]:
+    - link "Invest account" [ref=f3e4] [cursor=pointer]:
+      - /url: /
+      - text: Invest
+    - navigation "Main navigation" [ref=f3e5]:
+      - list [ref=f3e6]:
+        - listitem [ref=f3e7]:
+          - link "Dashboard" [ref=f3e8] [cursor=pointer]:
+            - /url: /dashboard
+        - listitem [ref=f3e11]:
+          - link "Account" [ref=f3e12] [cursor=pointer]:
+            - /url: /
+        - listitem [ref=f3e16]:
+          - link "History" [ref=f3e17] [cursor=pointer]:
+            - /url: /history
+    - navigation "Application settings" [ref=f3e21]:
+      - list [ref=f3e22]:
+        - listitem [ref=f3e23]:
+          - link "Settings" [ref=f3e24] [cursor=pointer]:
+            - /url: /settings
+  - main [ref=f3e29]:
+    - generic [ref=f3e30]:
+      - generic [ref=f3e31]:
+        - paragraph [ref=f3e32]: Account snapshot
+        - heading "Dashboard" [level=1] [ref=f3e33]
+      - generic [ref=f3e34]: Live data
+    - region "Account overview" [ref=f3e36]:
+      - article [ref=f3e37]:
+        - paragraph [ref=f3e38]: Total account value
+        - paragraph [ref=f3e39]: £1,380.41
+        - paragraph [ref=f3e40]: Current value of your account
+      - article [ref=f3e41]:
+        - generic [ref=f3e42]:
+          - paragraph [ref=f3e43]: Unrealised P/L
+          - generic [ref=f3e44]: Gain
+        - paragraph [ref=f3e45]: £0.00
+        - paragraph [ref=f3e46]: Open-position performance
+    - paragraph [ref=f3e47]: Values refresh automatically every five seconds while this page is open.

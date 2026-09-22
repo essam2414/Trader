@@ -49,6 +49,16 @@ describe("usePagination", () => {
     expect(result.current.page).toBe(3);
   });
 
+  it("returns to the first page", () => {
+    const { result } = renderHook(() => usePagination(ITEMS, 10));
+
+    act(() => result.current.goToNext());
+    act(() => result.current.goToFirst());
+
+    expect(result.current.page).toBe(1);
+    expect(result.current.pageItems).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
   it("handles fewer items than one page", () => {
     const { result } = renderHook(() => usePagination([1, 2, 3], 10));
 

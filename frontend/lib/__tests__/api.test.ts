@@ -23,6 +23,7 @@ describe("portfolio API client", () => {
         cash: { availableToTrade: 0, inPies: 0, reservedForOrders: 0 },
         unrealizedProfitLoss: 0,
         realizedProfitLoss: 0,
+        weeklyRealizedProfitLoss: 0,
       },
       positions: [],
     };
