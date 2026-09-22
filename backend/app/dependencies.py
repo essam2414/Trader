@@ -10,6 +10,7 @@ from typing import Generator
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from .alpaca_iex_stream import AlpacaIexTradeStream
 from .alpaca_market_data import AlpacaMarketDataClient
 from .db import SessionLocal
 from .services.portfolio_current import PortfolioCurrentCache
@@ -38,3 +39,8 @@ def get_portfolio_current_cache(request: Request) -> PortfolioCurrentCache:
 def get_alpaca_market_data_client(request: Request) -> AlpacaMarketDataClient | None:
     """Return Alpaca market data when credentials have been configured."""
     return request.app.state.alpaca_market_data_client
+
+
+def get_alpaca_iex_trade_stream(request: Request) -> AlpacaIexTradeStream | None:
+    """Return the app-wide IEX stream, when Alpaca credentials are configured."""
+    return request.app.state.alpaca_iex_trade_stream

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     alpaca_api_key: str | None = None
     alpaca_api_secret: str | None = None
     alpaca_data_feed: str = "iex"
-    alpaca_watchlist_limit: int = 50
+    alpaca_watchlist_limit: int = 20
     snapshot_interval_minutes: int = 15
     history_sync_interval_minutes: int = 1
 

@@ -11,6 +11,10 @@ os.environ.setdefault("TRADING212_API_KEY", "test-api-key")
 os.environ.setdefault("TRADING212_API_SECRET", "test-api-secret")
 os.environ.setdefault("DASHBOARD_API_KEY", "test-dashboard-key")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# Never let a developer's local .env start a real Alpaca stream from a test
+# application's lifespan. Individual market-data tests construct their own fakes.
+os.environ["ALPACA_API_KEY"] = ""
+os.environ["ALPACA_API_SECRET"] = ""
 
 import pytest
 from sqlalchemy import create_engine

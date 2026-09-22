@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.alpaca_market_data import AlpacaAsset
+from app.config import settings
 from app.models import WatchlistEntry
 from app.services.watchlist import (
     WatchlistLimitError,
@@ -48,6 +49,17 @@ def test_limit_and_remove_are_enforced(db_session):
 
     assert remove_entry(db_session, "asset-aapl") is True
     assert remove_entry(db_session, "asset-aapl") is False
+
+
+def test_default_watchlist_limit_rejects_the_twenty_first_equity(db_session):
+    client = FakeAlpacaClient()
+    for index in range(settings.alpaca_watchlist_limit):
+        client.asset = AlpacaAsset(f"asset-{index}", f"T{index}", f"Test {index}", "NASDAQ")
+        add_entry(db_session, client, client.asset.asset_id, limit=settings.alpaca_watchlist_limit)
+
+    client.asset = AlpacaAsset("asset-over-limit", "OVER", "Over Limit", "NASDAQ")
+    with pytest.raises(WatchlistLimitError):
+        add_entry(db_session, client, client.asset.asset_id, limit=settings.alpaca_watchlist_limit)
 
 
 def test_database_rejects_duplicate_alpaca_asset_ids(db_session):

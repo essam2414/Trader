@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import type { MarketSession, MarketSessionPhase, WatchlistEntry, WatchlistSearchResult } from "../lib/types";
 import { WatchlistItem, type WatchlistMode } from "./WatchlistItem";
 
-const POLL_INTERVAL_MS = 60_000;
+const MARKET_SESSION_REFRESH_INTERVAL_MS = 60_000;
 export { conciseStockName } from "./WatchlistItem";
 
 type DragState = {
@@ -15,6 +15,59 @@ type DragState = {
   x: number;
   y: number;
 };
+
+type WatchlistQuoteEvent = {
+  symbol: string;
+  price: number;
+  sourceTimestamp: string;
+  sourceType: string;
+  freshness: "fresh" | "stale" | "unavailable";
+  isExtendedHours: boolean;
+};
+
+function isWatchlistQuoteEvent(value: unknown): value is WatchlistQuoteEvent {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && "symbol" in value
+      && "price" in value
+      && "sourceTimestamp" in value
+      && "sourceType" in value
+      && "freshness" in value
+      && "isExtendedHours" in value
+      && typeof value.symbol === "string"
+      && typeof value.price === "number"
+      && typeof value.sourceTimestamp === "string"
+      && typeof value.sourceType === "string"
+      && ["fresh", "stale", "unavailable"].includes(String(value.freshness))
+      && typeof value.isExtendedHours === "boolean",
+  );
+}
+
+function applyQuoteEvent(entries: WatchlistEntry[], update: WatchlistQuoteEvent): WatchlistEntry[] {
+  return entries.map((entry) => {
+    if (entry.symbol !== update.symbol) return entry;
+    const previousClose = entry.quote.previousClose;
+    const dollarChange = previousClose === null ? null : update.price - previousClose;
+    const percentChange = previousClose === null || previousClose === 0
+      ? null
+      : ((update.price - previousClose) / previousClose) * 100;
+    return {
+      ...entry,
+      quote: {
+        ...entry.quote,
+        price: update.price,
+        dollarChange,
+        percentChange,
+        feed: "iex",
+        sourceTimestamp: update.sourceTimestamp,
+        sourceType: update.sourceType,
+        freshness: update.freshness,
+        isExtendedHours: update.isExtendedHours,
+      },
+    };
+  });
+}
 
 const londonTime = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/London",
@@ -103,26 +156,28 @@ export function WatchlistSection() {
   const dragStartEntries = useRef<WatchlistEntry[] | null>(null);
   const previewTarget = useRef<string | null>(null);
   const hasDropped = useRef(false);
+  const entryOrder = entries.map((entry) => entry.assetId).join("\u0000");
 
   useLayoutEffect(() => {
     const nextEntryTops = new Map<string, number>();
-    for (const entry of entries) {
-      const element = entryElements.current.get(entry.assetId);
+    const entryIds = entryOrder ? entryOrder.split("\u0000") : [];
+    for (const assetId of entryIds) {
+      const element = entryElements.current.get(assetId);
       if (!element) continue;
       const top = element.getBoundingClientRect().top;
-      const previousTop = previousEntryTops.current.get(entry.assetId);
+      const previousTop = previousEntryTops.current.get(assetId);
       if (previousTop !== undefined && previousTop !== top && typeof element.animate === "function") {
-        entryAnimations.current.get(entry.assetId)?.cancel();
+        entryAnimations.current.get(assetId)?.cancel();
         const animation = element.animate(
           [{ transform: `translateY(${previousTop - top}px)` }, { transform: "translateY(0)" }],
           { duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" },
         );
-        entryAnimations.current.set(entry.assetId, animation);
+        entryAnimations.current.set(assetId, animation);
       }
-      nextEntryTops.set(entry.assetId, top);
+      nextEntryTops.set(assetId, top);
     }
     previousEntryTops.current = nextEntryTops;
-  }, [entries]);
+  }, [entryOrder]);
 
   const loadWatchlist = useCallback(async () => {
     const requestId = ++listRequest.current;
@@ -165,15 +220,64 @@ export function WatchlistSection() {
     }, 0);
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        void loadWatchlist();
         void loadMarketSession();
       }
-    }, POLL_INTERVAL_MS);
+    }, MARKET_SESSION_REFRESH_INTERVAL_MS);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
     };
   }, [loadMarketSession, loadWatchlist]);
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return;
+    let source: EventSource | null = null;
+    let reconnectTimeout: number | undefined;
+    let stopped = false;
+
+    const disconnect = () => {
+      source?.close();
+      source = null;
+    };
+
+    const connect = () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      disconnect();
+      source = new EventSource("/api/watchlist/stream");
+      source.addEventListener("quote", (event) => {
+        try {
+          const update: unknown = JSON.parse((event as MessageEvent<string>).data);
+          if (isWatchlistQuoteEvent(update)) setEntries((current) => applyQuoteEvent(current, update));
+        } catch {
+          // Ignore malformed provider events; the next valid trade will replace this price.
+        }
+      });
+      source.onerror = () => {
+        disconnect();
+        if (!stopped && document.visibilityState === "visible") {
+          reconnectTimeout = window.setTimeout(connect, 2_000);
+        }
+      };
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadWatchlist();
+        connect();
+      } else {
+        disconnect();
+      }
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      stopped = true;
+      if (reconnectTimeout !== undefined) window.clearTimeout(reconnectTimeout);
+      disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadWatchlist]);
 
   useEffect(() => {
     const closeWhenClickingAway = (event: PointerEvent) => {
@@ -428,7 +532,7 @@ export function WatchlistSection() {
       </div>
       <div aria-label="Watchlist entries" className="dashboard-pane-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">
         {message && <p role="status" className="rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-300">{message}</p>}
-      {isLoading ? <p className="mt-4 text-sm text-neutral-500">Loading watchlist…</p> : entries.length === 0 ? <p className="mt-4 text-sm text-neutral-500">Search for a US equity to begin your watchlist.</p> : (
+      {isLoading ? <p className="mt-4 text-sm text-neutral-500">Loading watchlist…</p> : entries.length === 0 ? <p className="mt-4 text-sm text-neutral-500">Search for up to 20 US equities to begin your watchlist.</p> : (
         <div className="mt-2 space-y-1">
           {entries.map((entry) => {
             const isDragging = draggedAssetId === entry.assetId;

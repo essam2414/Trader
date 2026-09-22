@@ -7,6 +7,7 @@ describe("WatchlistSection search", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     Reflect.deleteProperty(document, "elementFromPoint");
+    Reflect.deleteProperty(HTMLElement.prototype, "animate");
   });
 
   it("closes an open search panel when the user clicks away", () => {
@@ -86,6 +87,116 @@ describe("WatchlistSection search", () => {
       "gap-5",
     );
     expect(screen.getByRole("combobox", { name: /search us equities/i })).toHaveClass("h-8");
+  });
+
+  it("patches a watchlist price from an incoming IEX stream trade", async () => {
+    const sources: FakeEventSource[] = [];
+    class FakeEventSource {
+      onerror: (() => void) | null = null;
+      private listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
+
+      constructor(readonly url: string) {
+        sources.push(this);
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+
+      close() {}
+
+      emit(type: string, data: unknown) {
+        for (const listener of this.listeners.get(type) ?? []) {
+          listener({ data: JSON.stringify(data) } as MessageEvent<string>);
+        }
+      }
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) => Promise.resolve({
+        ok: true,
+        json: async () => input === "/api/market-session" ? { phase: "closed" } : watchlistEntries(),
+      })),
+    );
+
+    render(<WatchlistSection />);
+    await screen.findByText("$188.25");
+    expect(sources).toHaveLength(1);
+    expect(sources[0].url).toBe("/api/watchlist/stream");
+
+    sources[0].emit("quote", {
+      symbol: "AAPL",
+      price: 189.5,
+      sourceTimestamp: "2026-09-22T14:00:00Z",
+      sourceType: "iex_trade_stream",
+      freshness: "fresh",
+      isExtendedHours: false,
+    });
+
+    expect(await screen.findByText("$189.50")).toBeInTheDocument();
+    expect(screen.getByText(/1\.20%/)).toBeInTheDocument();
+  });
+
+  it("does not treat a scroll between IEX quote events as a row reorder", async () => {
+    const sources: FakeEventSource[] = [];
+    class FakeEventSource {
+      onerror: (() => void) | null = null;
+      private listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
+
+      constructor() {
+        sources.push(this);
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+
+      close() {}
+
+      emit(type: string, data: unknown) {
+        for (const listener of this.listeners.get(type) ?? []) {
+          listener({ data: JSON.stringify(data) } as MessageEvent<string>);
+        }
+      }
+    }
+    let scrollOffset = 0;
+    const animate = vi.fn(() => ({ cancel: vi.fn() }) as unknown as Animation);
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const index = this.dataset.watchlistEntry === "aapl" ? 0 : this.dataset.watchlistEntry === "msft" ? 1 : -1;
+      return {
+        left: 0,
+        top: index < 0 ? 0 : 100 + index * 68 - scrollOffset,
+        width: 320,
+        height: index < 0 ? 0 : 68,
+      } as DOMRect;
+    });
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) => Promise.resolve({
+        ok: true,
+        json: async () => input === "/api/market-session" ? { phase: "closed" } : watchlistEntries(),
+      })),
+    );
+
+    render(<WatchlistSection />);
+    await screen.findByText("$188.25");
+    animate.mockClear();
+    scrollOffset = 60;
+
+    sources[0].emit("quote", {
+      symbol: "AAPL",
+      price: 189.5,
+      sourceTimestamp: "2026-09-22T14:00:00Z",
+      sourceType: "iex_trade_stream",
+      freshness: "fresh",
+      isExtendedHours: false,
+    });
+
+    await screen.findByText("$189.50");
+    expect(animate).not.toHaveBeenCalled();
   });
 
   it("shows the current US market session beneath the watchlist heading in one line", async () => {

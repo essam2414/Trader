@@ -29,6 +29,30 @@ export function watchlistBackendRequest(path: string, init: RequestInit = {}): P
   return authenticatedBackendRequest(path, init, "Watchlist service is unavailable");
 }
 
+export async function watchlistStreamBackendRequest(path: string): Promise<NextResponse> {
+  const token = (await cookies()).get(AUTH_COOKIE)?.value;
+  if (!(await isAuthenticated(token))) {
+    return NextResponse.json({ message: "Unauthenticated" }, { status: 401 });
+  }
+
+  try {
+    const response = await backendRequest(path, { headers: { Accept: "text/event-stream" } });
+    if (!response.ok || !response.body) {
+      const body: unknown = await response.json().catch(() => ({ message: "Watchlist stream unavailable" }));
+      return NextResponse.json(body, { status: response.status || 502 });
+    }
+    const headers = new Headers({
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
+    });
+    return new NextResponse(response.body, { status: response.status, headers });
+  } catch {
+    return NextResponse.json({ message: "Watchlist stream unavailable" }, { status: 502 });
+  }
+}
+
 export async function watchlistLogoBackendRequest(path: string): Promise<NextResponse> {
   const token = (await cookies()).get(AUTH_COOKIE)?.value;
   if (!(await isAuthenticated(token))) {

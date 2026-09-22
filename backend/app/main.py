@@ -11,9 +11,11 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
+from .alpaca_iex_stream import AlpacaIexTradeStream
 from .alpaca_market_data import AlpacaMarketDataClient
 from .config import settings
-from .db import Base, engine
+from .db import Base, SessionLocal, engine
+from .models import WatchlistEntry
 from .rate_limiter import trading212_rate_limiter
 from .routers.market_session import router as market_session_router
 from .routers.news import router as news_router
@@ -42,6 +44,20 @@ async def lifespan(app: FastAPI):
         if settings.alpaca_api_key and settings.alpaca_api_secret
         else None
     )
+    app.state.alpaca_iex_trade_stream = None
+    if settings.alpaca_api_key and settings.alpaca_api_secret:
+        stream = AlpacaIexTradeStream(
+            settings.alpaca_api_key, settings.alpaca_api_secret, settings.alpaca_watchlist_limit
+        )
+        session = SessionLocal()
+        try:
+            stream.sync_symbols(
+                [entry.symbol for entry in session.query(WatchlistEntry).order_by(WatchlistEntry.sort_order)]
+            )
+        finally:
+            session.close()
+        stream.start()
+        app.state.alpaca_iex_trade_stream = stream
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_snapshot_job, "interval", minutes=settings.snapshot_interval_minutes)
     scheduler.add_job(run_history_sync_job, "interval", minutes=settings.history_sync_interval_minutes)
@@ -49,6 +65,8 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     yield
     scheduler.shutdown()
+    if app.state.alpaca_iex_trade_stream is not None:
+        app.state.alpaca_iex_trade_stream.stop()
 
 
 app = FastAPI(title="Trader API", lifespan=lifespan)

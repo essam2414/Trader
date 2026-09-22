@@ -6,3 +6,4 @@ psycopg2-binary>=2.9
 pydantic-settings>=2.5
 apscheduler>=3.10
 alembic>=1.14
+websockets>=16.0
