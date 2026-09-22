@@ -55,6 +55,8 @@ describe("WatchlistSection search", () => {
               sourceType: "trade",
               freshness: "fresh",
               isExtendedHours: false,
+              isDelayed: false,
+              delaySeconds: null,
             },
           },
         ],
@@ -128,9 +130,12 @@ describe("WatchlistSection search", () => {
     sources[0].emit("quote", {
       symbol: "AAPL",
       price: 189.5,
+      feed: "iex",
       sourceTimestamp: "2026-09-22T14:00:00Z",
       sourceType: "iex_trade_stream",
       freshness: "fresh",
+      isDelayed: false,
+      delaySeconds: null,
       isExtendedHours: false,
     });
 
@@ -189,9 +194,12 @@ describe("WatchlistSection search", () => {
     sources[0].emit("quote", {
       symbol: "AAPL",
       price: 189.5,
+      feed: "iex",
       sourceTimestamp: "2026-09-22T14:00:00Z",
       sourceType: "iex_trade_stream",
       freshness: "fresh",
+      isDelayed: false,
+      delaySeconds: null,
       isExtendedHours: false,
     });
 
@@ -329,6 +337,8 @@ function watchlistEntry(assetId: string, symbol: string, name: string, price: nu
       sourceType: "trade",
       freshness: "fresh",
       isExtendedHours: false,
+      isDelayed: false,
+      delaySeconds: null,
     },
   };
 }

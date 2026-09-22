@@ -129,6 +129,8 @@ class WatchlistQuoteOut(BaseModel):
     sourceType: str | None
     freshness: str
     isExtendedHours: bool
+    isDelayed: bool
+    delaySeconds: int | None
 
 
 class WatchlistEntryOut(BaseModel):

@@ -111,6 +111,8 @@ export interface WatchlistQuote {
   sourceType: string | null;
   freshness: QuoteFreshness;
   isExtendedHours: boolean;
+  isDelayed: boolean;
+  delaySeconds: number | null;
 }
 
 export interface WatchlistEntry {

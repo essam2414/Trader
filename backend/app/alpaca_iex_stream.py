@@ -16,36 +16,40 @@ from websockets.asyncio.client import connect
 from .alpaca_market_data import NEW_YORK
 
 LOGGER = logging.getLogger(__name__)
-IEX_STREAM_URL = "wss://stream.data.alpaca.markets/v2/iex"
+STREAM_BASE_URL = "wss://stream.data.alpaca.markets/v2"
 RECONNECT_DELAY_SECONDS = 1
 MAX_RECONNECT_DELAY_SECONDS = 30
 
 
 @dataclass(frozen=True)
-class IexTrade:
-    """The latest usable IEX trade for a subscribed watchlist symbol."""
+class StreamTrade:
+    """The latest usable trade for a subscribed watchlist symbol."""
 
     symbol: str
     price: Decimal
     timestamp: datetime
     is_extended_hours: bool
+    feed: str = "iex"
 
 
-class AlpacaIexTradeStream:
-    """Keep one authenticated IEX stream and fan its latest trades out locally.
+class AlpacaTradeStream:
+    """Keep one authenticated Alpaca trade stream and fan trades out locally.
 
     Callers only need to synchronise the persisted watchlist symbols, read the
     latest trade cache, or subscribe to quote events. Connection, reconnect and
     subscription details remain inside this module.
     """
 
-    def __init__(self, api_key: str, api_secret: str, max_symbols: int) -> None:
+    def __init__(self, api_key: str, api_secret: str, max_symbols: int, feed: str = "iex") -> None:
+        if feed not in {"iex", "delayed_sip"}:
+            raise ValueError("stream feed must be iex or delayed_sip")
         self._api_key = api_key
         self._api_secret = api_secret
         self._max_symbols = max_symbols
+        self.feed = feed
         self._symbols: set[str] = set()
-        self._trades: dict[str, IexTrade] = {}
-        self._listeners: set[queue.Queue[IexTrade]] = set()
+        self._trades: dict[str, StreamTrade] = {}
+        self._listeners: set[queue.Queue[StreamTrade]] = set()
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._symbols_changed = threading.Event()
@@ -61,7 +65,7 @@ class AlpacaIexTradeStream:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_requested.clear()
-        self._thread = threading.Thread(target=self._run, name="alpaca-iex-stream", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=f"alpaca-{self.feed}-stream", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -81,19 +85,24 @@ class AlpacaIexTradeStream:
             self._trades = {symbol: trade for symbol, trade in self._trades.items() if symbol in normalized}
         self._symbols_changed.set()
 
-    def latest_trades(self, symbols: list[str]) -> dict[str, IexTrade]:
-        """Return only currently retained IEX trades for the requested symbols."""
+    def latest_trades(self, symbols: list[str]) -> dict[str, StreamTrade]:
+        """Return only currently retained trades for the requested symbols."""
         with self._lock:
             return {symbol: self._trades[symbol] for symbol in symbols if symbol in self._trades}
 
-    def subscribe(self) -> queue.Queue[IexTrade]:
-        """Register one local SSE consumer for future IEX trade events."""
-        listener: queue.Queue[IexTrade] = queue.Queue(maxsize=100)
+    def symbols(self) -> list[str]:
+        """Return the current subscription set for source-transition events."""
+        with self._lock:
+            return sorted(self._symbols)
+
+    def subscribe(self) -> queue.Queue[StreamTrade]:
+        """Register one local SSE consumer for future trade events."""
+        listener: queue.Queue[StreamTrade] = queue.Queue(maxsize=100)
         with self._lock:
             self._listeners.add(listener)
         return listener
 
-    def unsubscribe(self, listener: queue.Queue[IexTrade]) -> None:
+    def unsubscribe(self, listener: queue.Queue[StreamTrade]) -> None:
         with self._lock:
             self._listeners.discard(listener)
 
@@ -109,7 +118,9 @@ class AlpacaIexTradeStream:
                 self._symbols_changed.clear()
                 continue
             try:
-                async with connect(IEX_STREAM_URL, open_timeout=10, close_timeout=5) as socket:
+                async with connect(
+                    f"{STREAM_BASE_URL}/{self.feed}", open_timeout=10, close_timeout=5
+                ) as socket:
                     await socket.recv()  # Alpaca's connected acknowledgement.
                     await socket.send(
                         json.dumps({"action": "auth", "key": self._api_key, "secret": self._api_secret})
@@ -151,11 +162,12 @@ class AlpacaIexTradeStream:
                 continue
             try:
                 timestamp = datetime.fromisoformat(str(event["t"]).replace("Z", "+00:00"))
-                trade = IexTrade(
+                trade = StreamTrade(
                     symbol=symbol,
                     price=Decimal(str(event["p"])),
                     timestamp=timestamp,
                     is_extended_hours=not self._is_regular_session(timestamp),
+                    feed=self.feed,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
@@ -174,7 +186,7 @@ class AlpacaIexTradeStream:
             < (16, 0)
         )
 
-    def _record_trade(self, trade: IexTrade) -> None:
+    def _record_trade(self, trade: StreamTrade) -> None:
         with self._lock:
             previous = self._trades.get(trade.symbol)
             if previous is not None and trade.timestamp <= previous.timestamp:
@@ -194,3 +206,8 @@ class AlpacaIexTradeStream:
     def _current_symbols(self) -> set[str]:
         with self._lock:
             return set(self._symbols)
+
+
+# Backwards-compatible names for the existing IEX-only callers and tests.
+IexTrade = StreamTrade
+AlpacaIexTradeStream = AlpacaTradeStream

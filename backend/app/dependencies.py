@@ -41,6 +41,16 @@ def get_alpaca_market_data_client(request: Request) -> AlpacaMarketDataClient | 
     return request.app.state.alpaca_market_data_client
 
 
+def get_alpaca_delayed_sip_market_data_client(request: Request) -> AlpacaMarketDataClient | None:
+    """Return delayed SIP market data for extended-hours watchlist fallbacks."""
+    return request.app.state.alpaca_delayed_sip_market_data_client
+
+
 def get_alpaca_iex_trade_stream(request: Request) -> AlpacaIexTradeStream | None:
     """Return the app-wide IEX stream, when Alpaca credentials are configured."""
     return request.app.state.alpaca_iex_trade_stream
+
+
+def get_alpaca_delayed_sip_trade_stream(request: Request) -> AlpacaIexTradeStream | None:
+    """Return the app-wide delayed SIP stream, when Alpaca credentials are configured."""
+    return request.app.state.alpaca_delayed_sip_trade_stream

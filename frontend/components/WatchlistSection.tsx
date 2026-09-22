@@ -19,9 +19,12 @@ type DragState = {
 type WatchlistQuoteEvent = {
   symbol: string;
   price: number;
+  feed: string;
   sourceTimestamp: string;
   sourceType: string;
   freshness: "fresh" | "stale" | "unavailable";
+  isDelayed: boolean;
+  delaySeconds: number | null;
   isExtendedHours: boolean;
 };
 
@@ -31,15 +34,21 @@ function isWatchlistQuoteEvent(value: unknown): value is WatchlistQuoteEvent {
       && typeof value === "object"
       && "symbol" in value
       && "price" in value
+      && "feed" in value
       && "sourceTimestamp" in value
       && "sourceType" in value
       && "freshness" in value
+      && "isDelayed" in value
+      && "delaySeconds" in value
       && "isExtendedHours" in value
       && typeof value.symbol === "string"
       && typeof value.price === "number"
+      && typeof value.feed === "string"
       && typeof value.sourceTimestamp === "string"
       && typeof value.sourceType === "string"
       && ["fresh", "stale", "unavailable"].includes(String(value.freshness))
+      && typeof value.isDelayed === "boolean"
+      && (typeof value.delaySeconds === "number" || value.delaySeconds === null)
       && typeof value.isExtendedHours === "boolean",
   );
 }
@@ -59,10 +68,12 @@ function applyQuoteEvent(entries: WatchlistEntry[], update: WatchlistQuoteEvent)
         price: update.price,
         dollarChange,
         percentChange,
-        feed: "iex",
+        feed: update.feed,
         sourceTimestamp: update.sourceTimestamp,
         sourceType: update.sourceType,
         freshness: update.freshness,
+        isDelayed: update.isDelayed,
+        delaySeconds: update.delaySeconds,
         isExtendedHours: update.isExtendedHours,
       },
     };

@@ -25,6 +25,8 @@ describe("WatchlistItem", () => {
             sourceType: null,
             freshness: "unavailable",
             isExtendedHours: false,
+            isDelayed: false,
+            delaySeconds: null,
           },
         }}
         mode="default"
@@ -65,6 +67,8 @@ describe("WatchlistItem", () => {
         sourceType: null,
         freshness: "unavailable" as const,
         isExtendedHours: false,
+        isDelayed: false,
+        delaySeconds: null,
       },
     };
     const props = {
@@ -117,6 +121,8 @@ describe("WatchlistItem", () => {
             sourceType: "trade",
             freshness: "fresh",
             isExtendedHours: false,
+            isDelayed: false,
+            delaySeconds: null,
           },
         }}
         mode="default"
@@ -133,5 +139,41 @@ describe("WatchlistItem", () => {
     expect(screen.getByText("$249.22")).toBeInTheDocument();
     expect(screen.getByText("↘ 0.48%")).toBeInTheDocument();
     expect(screen.queryByText(/-0\.48%/)).not.toBeInTheDocument();
+  });
+
+  it("labels delayed SIP prices so they are not mistaken for live IEX data", () => {
+    render(
+      <WatchlistItem
+        entry={{
+          assetId: "asset-1",
+          symbol: "VRT",
+          name: "Vertiv Holdings Co Class A Common Stock",
+          exchange: "NYSE",
+          sortOrder: 0,
+          addedAt: "2026-09-18T13:30:00Z",
+          logoUrl: "/api/watchlist/asset-1/logo",
+          quote: {
+            price: 249.22,
+            previousClose: 250.42,
+            dollarChange: -1.2,
+            percentChange: -0.48,
+            sparkline: [],
+            feed: "delayed_sip",
+            sourceTimestamp: "2026-09-18T13:20:00Z",
+            sourceType: "delayed_sip_trade_stream",
+            freshness: "fresh",
+            isExtendedHours: true,
+            isDelayed: true,
+            delaySeconds: 900,
+          },
+        }}
+        mode="default"
+        isDragging={false}
+        isSavingOrder={false}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Delayed SIP · 15 min")).toBeInTheDocument();
   });
 });

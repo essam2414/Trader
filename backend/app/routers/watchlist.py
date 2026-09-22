@@ -2,18 +2,26 @@
 
 import json
 import queue
-from datetime import datetime, timedelta, timezone
+import time
+from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..alpaca_iex_stream import AlpacaIexTradeStream, IexTrade
-from ..alpaca_market_data import AlpacaMarketDataClient
+from ..alpaca_iex_stream import AlpacaTradeStream, StreamTrade
+from ..alpaca_market_data import AlpacaMarketDataClient, AlpacaUnavailableError, MarketSessionStatus
 from ..auth import require_api_key
 from ..config import settings
-from ..dependencies import get_alpaca_iex_trade_stream, get_alpaca_market_data_client, get_db
+from ..dependencies import (
+    get_alpaca_delayed_sip_market_data_client,
+    get_alpaca_delayed_sip_trade_stream,
+    get_alpaca_iex_trade_stream,
+    get_alpaca_market_data_client,
+    get_db,
+)
 from ..models import WatchlistEntry
 from ..schemas import (
     SparklinePoint,
@@ -32,6 +40,7 @@ from ..services.watchlist import (
     reorder_entries,
     unavailable_quote,
 )
+from ..watchlist_price_resolver import WatchlistPriceResolver
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
@@ -47,9 +56,9 @@ def require_alpaca(client: AlpacaMarketDataClient | None) -> AlpacaMarketDataCli
     return client
 
 
-def require_iex_stream(stream: AlpacaIexTradeStream | None) -> AlpacaIexTradeStream:
+def require_stream(stream: AlpacaTradeStream | None) -> AlpacaTradeStream:
     if stream is None:
-        raise HTTPException(status_code=503, detail="Alpaca IEX streaming is not configured")
+        raise HTTPException(status_code=503, detail="Alpaca watchlist streaming is not configured")
     if not stream.is_within_limit:
         raise HTTPException(
             status_code=409,
@@ -61,41 +70,64 @@ def require_iex_stream(stream: AlpacaIexTradeStream | None) -> AlpacaIexTradeStr
     return stream
 
 
-def sync_stream_symbols(db: Session, stream: AlpacaIexTradeStream | None) -> None:
-    if stream is None:
-        return
+def sync_stream_symbols(db: Session, *streams: AlpacaTradeStream | None) -> None:
     entries = db.query(WatchlistEntry).order_by(WatchlistEntry.sort_order, WatchlistEntry.added_at)
-    stream.sync_symbols([entry.symbol for entry in entries])
+    symbols = [entry.symbol for entry in entries]
+    for stream in streams:
+        if stream is not None:
+            stream.sync_symbols(symbols)
 
 
-def merge_stream_trade(quote, trade: IexTrade | None):
-    """Overlay a newer IEX stream trade while retaining REST baseline fields."""
+def merge_stream_trade(quote, trade: StreamTrade | None):
+    """Overlay a newer stream trade while retaining its REST baseline fields."""
     if trade is None:
         return quote
     if quote is not None and quote.source_timestamp is not None and trade.timestamp < quote.source_timestamp:
         return quote
-    baseline = quote or unavailable_quote("iex")
+    baseline = quote or unavailable_quote(trade.feed)
     previous_close = baseline.previous_close
     dollar_change = trade.price - previous_close if previous_close is not None else None
     percent_change = (
         (dollar_change / previous_close) * 100 if dollar_change is not None and previous_close != 0 else None
     )
-    freshness = "fresh" if datetime.now(timezone.utc) - trade.timestamp <= timedelta(minutes=5) else "stale"
     return type(baseline)(
         price=trade.price,
         previous_close=previous_close,
         dollar_change=dollar_change,
         percent_change=percent_change,
         sparkline=baseline.sparkline,
-        feed="iex",
+        feed=trade.feed,
         source_timestamp=trade.timestamp,
-        source_type="iex_trade_stream",
-        freshness=freshness,
+        source_type=f"{trade.feed}_trade_stream",
+        freshness=(
+            "fresh"
+            if trade.feed == "iex"
+            or WatchlistPriceResolver.is_delayed_sip_current(trade.timestamp, datetime.now(timezone.utc))
+            else "stale"
+        ),
         is_extended_hours=trade.is_extended_hours,
     )
 
 
-def sse_event(trade: IexTrade) -> str:
+def select_quote(iex_quote, delayed_sip_quote, session: MarketSessionStatus | None, now: datetime):
+    """Select the price source without changing the established P&L calculation."""
+    if session is None:
+        return iex_quote
+    iex_timestamp = iex_quote.source_timestamp if iex_quote is not None else None
+    feed = WatchlistPriceResolver.select_feed(session, now, iex_timestamp)
+    if feed != "delayed_sip":
+        return iex_quote
+    if delayed_sip_quote is None:
+        return unavailable_quote("delayed_sip")
+    freshness = (
+        "fresh"
+        if WatchlistPriceResolver.is_delayed_sip_current(delayed_sip_quote.source_timestamp, now)
+        else "stale"
+    )
+    return replace(delayed_sip_quote, freshness=freshness, is_extended_hours=True)
+
+
+def sse_event(trade: StreamTrade, is_extended_hours: bool) -> str:
     """Encode the minimal state patch required by the browser watchlist."""
     return (
         "event: quote\ndata: "
@@ -103,28 +135,73 @@ def sse_event(trade: IexTrade) -> str:
             {
                 "symbol": trade.symbol,
                 "price": float(trade.price),
+                "feed": trade.feed,
                 "sourceTimestamp": trade.timestamp.isoformat(),
-                "sourceType": "iex_trade_stream",
+                "sourceType": f"{trade.feed}_trade_stream",
                 "freshness": "fresh",
-                "isExtendedHours": trade.is_extended_hours,
+                "isDelayed": trade.feed == "delayed_sip",
+                "delaySeconds": 900 if trade.feed == "delayed_sip" else None,
+                "isExtendedHours": is_extended_hours,
             }
         )
         + "\n\n"
     )
 
 
-def stream_events(stream: AlpacaIexTradeStream) -> Iterator[str]:
-    """Yield one quote event per incoming IEX trade, with SSE keep-alives."""
-    listener = stream.subscribe()
+def _selected_trade(
+    iex_stream: AlpacaTradeStream,
+    delayed_sip_stream: AlpacaTradeStream,
+    symbol: str,
+    session: MarketSessionStatus,
+    now: datetime,
+) -> StreamTrade | None:
+    iex_trade = iex_stream.latest_trades([symbol]).get(symbol)
+    feed = WatchlistPriceResolver.select_feed(session, now, iex_trade.timestamp if iex_trade else None)
+    if feed == "iex":
+        return iex_trade
+    if feed == "delayed_sip":
+        return delayed_sip_stream.latest_trades([symbol]).get(symbol)
+    return None
+
+
+def stream_events(
+    iex_stream: AlpacaTradeStream,
+    delayed_sip_stream: AlpacaTradeStream,
+    market_data: AlpacaMarketDataClient,
+) -> Iterator[str]:
+    """Yield selected IEX or delayed-SIP quote events with transition updates."""
+    listeners = (iex_stream.subscribe(), delayed_sip_stream.subscribe())
+    last_selected_trades: dict[str, tuple[str, datetime]] = {}
+    last_keepalive = time.monotonic()
     try:
         yield ": connected\n\n"
         while True:
+            now = datetime.now(timezone.utc)
             try:
-                yield sse_event(listener.get(timeout=15))
-            except queue.Empty:
+                session = market_data.get_market_session(now)
+            except AlpacaUnavailableError:
+                session = None
+            if session is not None:
+                symbols = set(iex_stream.symbols()) | set(delayed_sip_stream.symbols())
+                for symbol in sorted(symbols):
+                    trade = _selected_trade(iex_stream, delayed_sip_stream, symbol, session, now)
+                    if trade is None:
+                        continue
+                    selection = (trade.feed, trade.timestamp)
+                    if last_selected_trades.get(symbol) != selection:
+                        last_selected_trades[symbol] = selection
+                        yield sse_event(trade, session.phase != "regular")
+                for listener in listeners:
+                    try:
+                        listener.get(timeout=0.25)
+                    except queue.Empty:
+                        continue
+            if time.monotonic() - last_keepalive >= 15:
                 yield ": keepalive\n\n"
+                last_keepalive = time.monotonic()
     finally:
-        stream.unsubscribe(listener)
+        iex_stream.unsubscribe(listeners[0])
+        delayed_sip_stream.unsubscribe(listeners[1])
 
 
 def quote_out(quote, feed: str) -> WatchlistQuoteOut:
@@ -144,6 +221,8 @@ def quote_out(quote, feed: str) -> WatchlistQuoteOut:
         sourceType=market_quote.source_type,
         freshness=market_quote.freshness,
         isExtendedHours=market_quote.is_extended_hours,
+        isDelayed=market_quote.feed == "delayed_sip",
+        delaySeconds=900 if market_quote.feed == "delayed_sip" else None,
     )
 
 
@@ -168,13 +247,30 @@ def search_watchlist_assets(
 def get_watchlist(
     db: Session = Depends(get_db),
     client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
-    stream: AlpacaIexTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    delayed_sip_client: AlpacaMarketDataClient | None = Depends(get_alpaca_delayed_sip_market_data_client),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
 ) -> list[WatchlistEntryOut]:
     market_data = require_alpaca(client)
     entries = db.query(WatchlistEntry).order_by(WatchlistEntry.sort_order, WatchlistEntry.added_at).all()
     refresh_metadata(db, market_data, entries)
     quotes = market_data.get_watchlist_market_data([entry.symbol for entry in entries])
     latest_trades = stream.latest_trades([entry.symbol for entry in entries]) if stream else {}
+    try:
+        session = market_data.get_market_session()
+    except AlpacaUnavailableError:
+        session = None
+    delayed_quotes = (
+        delayed_sip_client.get_watchlist_market_data([entry.symbol for entry in entries])
+        if delayed_sip_client is not None
+        and session is not None
+        and session.phase in {"pre_market", "after_hours"}
+        else {}
+    )
+    delayed_trades = (
+        delayed_sip_stream.latest_trades([entry.symbol for entry in entries]) if delayed_sip_stream else {}
+    )
+    now = datetime.now(timezone.utc)
     result: list[WatchlistEntryOut] = []
     for entry in entries:
         result.append(
@@ -187,7 +283,15 @@ def get_watchlist(
                 addedAt=entry.added_at,
                 logoUrl=logo_url(entry.alpaca_asset_id, entry.logo_checked_at),
                 quote=quote_out(
-                    merge_stream_trade(quotes.get(entry.symbol), latest_trades.get(entry.symbol)), "iex"
+                    select_quote(
+                        merge_stream_trade(quotes.get(entry.symbol), latest_trades.get(entry.symbol)),
+                        merge_stream_trade(
+                            delayed_quotes.get(entry.symbol), delayed_trades.get(entry.symbol)
+                        ),
+                        session,
+                        now,
+                    ),
+                    "iex",
                 ),
             )
         )
@@ -199,7 +303,8 @@ def add_watchlist_entry(
     payload: WatchlistAdd,
     db: Session = Depends(get_db),
     client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
-    stream: AlpacaIexTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
 ) -> WatchlistEntryOut:
     market_data = require_alpaca(client)
     try:
@@ -208,7 +313,7 @@ def add_watchlist_entry(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    sync_stream_symbols(db, stream)
+    sync_stream_symbols(db, stream, delayed_sip_stream)
     quote = unavailable_quote(market_data.feed)
     return WatchlistEntryOut(
         assetId=entry.alpaca_asset_id,
@@ -229,17 +334,21 @@ def add_watchlist_entry(
             sourceType=None,
             freshness="unavailable",
             isExtendedHours=False,
+            isDelayed=False,
+            delaySeconds=None,
         ),
     )
 
 
 @router.get("/watchlist/stream")
 def stream_watchlist_quotes(
-    stream: AlpacaIexTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
 ) -> StreamingResponse:
-    """Relay the server-side Alpaca IEX stream to authenticated browser clients."""
+    """Relay the selected IEX or delayed-SIP stream to browser clients."""
     return StreamingResponse(
-        stream_events(require_iex_stream(stream)),
+        stream_events(require_stream(stream), require_stream(delayed_sip_stream), require_alpaca(client)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
@@ -275,8 +384,9 @@ def update_watchlist_order(payload: WatchlistOrderUpdate, db: Session = Depends(
 def delete_watchlist_entry(
     asset_id: str,
     db: Session = Depends(get_db),
-    stream: AlpacaIexTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+    delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
 ) -> None:
     if not remove_entry(db, asset_id):
         raise HTTPException(status_code=404, detail="Watchlist entry not found")
-    sync_stream_symbols(db, stream)
+    sync_stream_symbols(db, stream, delayed_sip_stream)

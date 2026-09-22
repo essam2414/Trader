@@ -93,6 +93,7 @@ export function WatchlistItem({
   const percentChange = entry.quote.percentChange;
   const changeClass = trend === "positive" ? "text-[#32e64d]" : trend === "negative" ? "text-[#ff3b45]" : "text-[#8a9298]";
   const changeIndicator = trend === "positive" ? "↗" : trend === "negative" ? "↘" : "–";
+  const delayedLabel = entry.quote.isDelayed || entry.quote.feed === "delayed_sip";
   const interactiveClass = mode === "move"
     ? "cursor-grab select-none touch-none active:cursor-grabbing"
     : mode === "delete"
@@ -148,6 +149,14 @@ export function WatchlistItem({
         <p className={`mt-0.5 truncate text-[13px] font-semibold leading-none sm:text-[14px] ${changeClass}`}>
           {percentChange === null ? "—" : `${changeIndicator} ${Math.abs(percentChange).toFixed(2)}%`}
         </p>
+        {delayedLabel && (
+          <p
+            className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+            title="Consolidated SIP price delayed by approximately 15 minutes"
+          >
+            Delayed SIP · 15 min
+          </p>
+        )}
       </div>
     </div>
   );
