@@ -4,14 +4,14 @@ import json
 import queue
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..alpaca_iex_stream import AlpacaTradeStream, StreamTrade
+from ..alpaca_iex_stream import AlpacaTradeStream, StreamBar, StreamTrade
 from ..alpaca_market_data import AlpacaMarketDataClient, AlpacaUnavailableError, MarketSessionStatus
 from ..auth import require_api_key
 from ..config import settings
@@ -20,17 +20,21 @@ from ..dependencies import (
     get_alpaca_delayed_sip_trade_stream,
     get_alpaca_iex_trade_stream,
     get_alpaca_market_data_client,
+    get_chart_data_source,
     get_db,
 )
 from ..models import WatchlistEntry
 from ..schemas import (
     SparklinePoint,
+    StockChartBarOut,
+    StockChartOut,
     WatchlistAdd,
     WatchlistEntryOut,
     WatchlistOrderUpdate,
     WatchlistQuoteOut,
     WatchlistSearchResult,
 )
+from ..services.chart_data import CHART_RANGES, ChartDataSource, session_for
 from ..services.watchlist import (
     WatchlistLimitError,
     add_entry,
@@ -146,6 +150,58 @@ def sse_event(trade: StreamTrade, is_extended_hours: bool) -> str:
         )
         + "\n\n"
     )
+
+
+def chart_bar_payload(bar: StreamBar) -> dict[str, object]:
+    return {
+        "startsAt": bar.starts_at.isoformat(),
+        "open": float(bar.open),
+        "high": float(bar.high),
+        "low": float(bar.low),
+        "close": float(bar.close),
+        "volume": bar.volume,
+        "session": session_for(bar.starts_at),
+        "isUpdated": bar.is_updated,
+        "feed": bar.feed,
+    }
+
+
+def chart_stream_events(stream: AlpacaTradeStream, symbol: str) -> Iterator[str]:
+    """Expose the rolling IEX cache first, then completed/corrected bars and trades."""
+    trade_listener = stream.subscribe()
+    bar_listener = stream.subscribe_bars()
+    try:
+        initial_bars = stream.latest_bars([symbol], datetime.now(timezone.utc) - timedelta(minutes=20))
+        initial_trade = stream.latest_trades([symbol]).get(symbol)
+        snapshot: dict[str, object] = {
+            "bars": [chart_bar_payload(bar) for bar in initial_bars.get(symbol, [])]
+        }
+        if initial_trade is not None:
+            snapshot["latestTrade"] = {
+                "price": float(initial_trade.price),
+                "timestamp": initial_trade.timestamp.isoformat(),
+            }
+        yield "event: live_snapshot\ndata: " + json.dumps(snapshot) + "\n\n"
+        while True:
+            try:
+                bar = bar_listener.get(timeout=0.25)
+                if bar.symbol == symbol:
+                    yield "event: bar\ndata: " + json.dumps(chart_bar_payload(bar)) + "\n\n"
+            except queue.Empty:
+                pass
+            try:
+                trade = trade_listener.get_nowait()
+                if trade.symbol == symbol:
+                    yield (
+                        "event: trade\ndata: "
+                        + json.dumps({"price": float(trade.price), "timestamp": trade.timestamp.isoformat()})
+                        + "\n\n"
+                    )
+            except queue.Empty:
+                pass
+    finally:
+        stream.unsubscribe(trade_listener)
+        stream.unsubscribe_bars(bar_listener)
 
 
 def _selected_trade(
@@ -296,6 +352,68 @@ def get_watchlist(
             )
         )
     return result
+
+
+@router.get("/watchlist/{asset_id}/chart", response_model=StockChartOut)
+def get_stock_chart(
+    asset_id: str,
+    range: str = Query(default="1D", pattern="^(1D|1W|1M|3M|1Y|MAX)$"),
+    db: Session = Depends(get_db),
+    chart_data_source: ChartDataSource | None = Depends(get_chart_data_source),
+) -> StockChartOut:
+    """Return on-demand delayed SIP history plus a visibly separate live IEX tail."""
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    if chart_data_source is None:
+        raise HTTPException(status_code=503, detail="Alpaca chart data is not configured")
+    chart_range = CHART_RANGES[range]
+    now = datetime.now(timezone.utc)
+    try:
+        snapshot = chart_data_source.load_chart(entry, chart_range, now)
+    except AlpacaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Stock chart data is temporarily unavailable") from exc
+
+    def output(bar) -> StockChartBarOut:
+        return StockChartBarOut(
+            startsAt=bar.starts_at,
+            open=float(bar.open),
+            high=float(bar.high),
+            low=float(bar.low),
+            close=float(bar.close),
+            volume=bar.volume,
+            session=bar.session,
+        )
+
+    return StockChartOut(
+        assetId=entry.alpaca_asset_id,
+        symbol=entry.symbol,
+        name=entry.name,
+        range=range,
+        intervalSeconds=chart_range.output_interval_seconds,
+        canonicalFeed="sip",
+        adjustment="raw",
+        canonicalThrough=snapshot.canonical_through,
+        delaySeconds=900,
+        canonicalBars=[output(bar) for bar in snapshot.canonical_bars],
+        provisionalIexBars=[output(bar) for bar in snapshot.provisional_iex_bars],
+    )
+
+
+@router.get("/watchlist/{asset_id}/chart/stream")
+def stream_stock_chart(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+) -> StreamingResponse:
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    return StreamingResponse(
+        chart_stream_events(require_stream(stream), entry.symbol),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/watchlist", response_model=WatchlistEntryOut, status_code=201)

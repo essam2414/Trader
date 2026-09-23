@@ -47,6 +47,20 @@ class SparklinePoint:
 
 
 @dataclass(frozen=True)
+class HistoricalBar:
+    """Raw OHLCV data from one provider aggregation interval."""
+
+    starts_at: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    trade_count: int | None
+    vwap: Decimal | None
+
+
+@dataclass(frozen=True)
 class TradingSession:
     opens_at: datetime
     closes_at: datetime
@@ -323,6 +337,78 @@ class AlpacaMarketDataClient:
         return {
             symbol: self._decimal(bars[-1]["c"]) for symbol, bars in payload.get("bars", {}).items() if bars
         }
+
+    def get_historical_bars(
+        self,
+        symbol: str,
+        start: datetime | None,
+        end: datetime | None,
+        timeframe: str,
+        adjustment: str = "raw",
+    ) -> list[HistoricalBar]:
+        """Load every page of one symbol's raw history in chronological order."""
+        params = {
+            "symbols": symbol,
+            "timeframe": timeframe,
+            "adjustment": adjustment,
+            "feed": self.feed,
+            "limit": "10000",
+            "sort": "asc",
+        }
+        if start is not None:
+            params["start"] = start.astimezone(timezone.utc).isoformat()
+        if end is not None:
+            params["end"] = end.astimezone(timezone.utc).isoformat()
+        result: list[HistoricalBar] = []
+        page_token: str | None = None
+        while True:
+            request_params = {**params, **({"page_token": page_token} if page_token else {})}
+            payload = self._request(DATA_BASE_URL, "/v2/stocks/bars", request_params)
+            grouped = payload.get("bars", {})
+            raw_bars = grouped.get(symbol, []) if isinstance(grouped, dict) else grouped
+            for bar in raw_bars:
+                result.append(
+                    HistoricalBar(
+                        starts_at=datetime.fromisoformat(bar["t"].replace("Z", "+00:00")),
+                        open=self._decimal(bar["o"]),
+                        high=self._decimal(bar["h"]),
+                        low=self._decimal(bar["l"]),
+                        close=self._decimal(bar["c"]),
+                        volume=int(bar["v"]),
+                        trade_count=int(bar["n"]) if bar.get("n") is not None else None,
+                        vwap=self._decimal(bar["vw"]) if bar.get("vw") is not None else None,
+                    )
+                )
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
+        return result
+
+    def get_corporate_actions(self, symbol: str, start: date, end: date) -> dict[str, Any]:
+        """Return the provider's complete corporate-action envelope for an asset."""
+        params = {
+            "symbols": symbol,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "data_quality": "complete",
+            "limit": "1000",
+            "sort": "asc",
+        }
+        result: dict[str, Any] = {}
+        page_token: str | None = None
+        while True:
+            request_params = {**params, **({"page_token": page_token} if page_token else {})}
+            payload = self._request(DATA_BASE_URL, "/v1/corporate-actions", request_params)
+            for key, value in payload.items():
+                if key == "next_page_token":
+                    continue
+                if isinstance(value, list):
+                    result.setdefault(key, []).extend(value)
+                else:
+                    result[key] = value
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return result
 
     @staticmethod
     def _sparkline_bucket(timestamp: datetime) -> datetime:

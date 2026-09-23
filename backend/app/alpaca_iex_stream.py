@@ -8,7 +8,7 @@ import logging
 import queue
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from websockets.asyncio.client import connect
@@ -32,6 +32,22 @@ class StreamTrade:
     feed: str = "iex"
 
 
+@dataclass(frozen=True)
+class StreamBar:
+    """A completed or corrected provider minute bar retained only for live display."""
+
+    symbol: str
+    starts_at: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    is_extended_hours: bool
+    is_updated: bool
+    feed: str = "iex"
+
+
 class AlpacaTradeStream:
     """Keep one authenticated Alpaca trade stream and fan trades out locally.
 
@@ -49,7 +65,9 @@ class AlpacaTradeStream:
         self.feed = feed
         self._symbols: set[str] = set()
         self._trades: dict[str, StreamTrade] = {}
+        self._bars: dict[str, dict[datetime, StreamBar]] = {}
         self._listeners: set[queue.Queue[StreamTrade]] = set()
+        self._bar_listeners: set[queue.Queue[StreamBar]] = set()
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._symbols_changed = threading.Event()
@@ -83,6 +101,7 @@ class AlpacaTradeStream:
                 return
             self._symbols = normalized
             self._trades = {symbol: trade for symbol, trade in self._trades.items() if symbol in normalized}
+            self._bars = {symbol: bars for symbol, bars in self._bars.items() if symbol in normalized}
         self._symbols_changed.set()
 
     def latest_trades(self, symbols: list[str]) -> dict[str, StreamTrade]:
@@ -95,6 +114,18 @@ class AlpacaTradeStream:
         with self._lock:
             return sorted(self._symbols)
 
+    def latest_bars(self, symbols: list[str], since: datetime | None = None) -> dict[str, list[StreamBar]]:
+        """Return the small rolling live cache, including late-bar corrections."""
+        with self._lock:
+            return {
+                symbol: [
+                    bar
+                    for stamp, bar in sorted(self._bars.get(symbol, {}).items())
+                    if since is None or stamp >= since
+                ]
+                for symbol in symbols
+            }
+
     def subscribe(self) -> queue.Queue[StreamTrade]:
         """Register one local SSE consumer for future trade events."""
         listener: queue.Queue[StreamTrade] = queue.Queue(maxsize=100)
@@ -105,6 +136,16 @@ class AlpacaTradeStream:
     def unsubscribe(self, listener: queue.Queue[StreamTrade]) -> None:
         with self._lock:
             self._listeners.discard(listener)
+
+    def subscribe_bars(self) -> queue.Queue[StreamBar]:
+        listener: queue.Queue[StreamBar] = queue.Queue(maxsize=100)
+        with self._lock:
+            self._bar_listeners.add(listener)
+        return listener
+
+    def unsubscribe_bars(self, listener: queue.Queue[StreamBar]) -> None:
+        with self._lock:
+            self._bar_listeners.discard(listener)
 
     def _run(self) -> None:
         asyncio.run(self._run_forever())
@@ -126,7 +167,16 @@ class AlpacaTradeStream:
                         json.dumps({"action": "auth", "key": self._api_key, "secret": self._api_secret})
                     )
                     await socket.recv()  # Authentication acknowledgement or error.
-                    await socket.send(json.dumps({"action": "subscribe", "trades": sorted(symbols)}))
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "action": "subscribe",
+                                "trades": sorted(symbols),
+                                "bars": sorted(symbols),
+                                "updatedBars": sorted(symbols),
+                            }
+                        )
+                    )
                     delay = RECONNECT_DELAY_SECONDS
                     await self._receive_until_symbols_change(socket, symbols)
             except Exception:  # The stream must recover from transient network/provider failures.
@@ -155,23 +205,49 @@ class AlpacaTradeStream:
         if not isinstance(events, list):
             return
         for event in events:
-            if not isinstance(event, dict) or event.get("T") != "t":
+            if not isinstance(event, dict):
                 continue
+            event_type = event.get("T")
             symbol = str(event.get("S", "")).upper()
             if symbol not in subscribed_symbols:
                 continue
-            try:
-                timestamp = datetime.fromisoformat(str(event["t"]).replace("Z", "+00:00"))
-                trade = StreamTrade(
-                    symbol=symbol,
-                    price=Decimal(str(event["p"])),
-                    timestamp=timestamp,
-                    is_extended_hours=not self._is_regular_session(timestamp),
-                    feed=self.feed,
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-            self._record_trade(trade)
+            if event_type == "t":
+                self._process_trade_event(symbol, event)
+            elif event_type in {"b", "u"}:
+                self._process_bar_event(symbol, event, is_updated=event_type == "u")
+
+    def _process_trade_event(self, symbol: str, event: dict) -> None:
+        try:
+            timestamp = datetime.fromisoformat(str(event["t"]).replace("Z", "+00:00"))
+            trade = StreamTrade(
+                symbol=symbol,
+                price=Decimal(str(event["p"])),
+                timestamp=timestamp,
+                is_extended_hours=not self._is_regular_session(timestamp),
+                feed=self.feed,
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        self._record_trade(trade)
+
+    def _process_bar_event(self, symbol: str, event: dict, is_updated: bool) -> None:
+        try:
+            starts_at = datetime.fromisoformat(str(event["t"]).replace("Z", "+00:00"))
+            bar = StreamBar(
+                symbol=symbol,
+                starts_at=starts_at,
+                open=Decimal(str(event["o"])),
+                high=Decimal(str(event["h"])),
+                low=Decimal(str(event["l"])),
+                close=Decimal(str(event["c"])),
+                volume=int(event["v"]),
+                is_extended_hours=not self._is_regular_session(starts_at),
+                is_updated=is_updated,
+                feed=self.feed,
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        self._record_bar(bar)
 
     @staticmethod
     def _is_regular_session(timestamp: datetime) -> bool:
@@ -200,6 +276,23 @@ class AlpacaTradeStream:
                 try:
                     listener.get_nowait()
                     listener.put_nowait(trade)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def _record_bar(self, bar: StreamBar) -> None:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+        with self._lock:
+            bars = self._bars.setdefault(bar.symbol, {})
+            bars[bar.starts_at] = bar
+            self._bars[bar.symbol] = {stamp: value for stamp, value in bars.items() if stamp >= cutoff}
+            listeners = tuple(self._bar_listeners)
+        for listener in listeners:
+            try:
+                listener.put_nowait(bar)
+            except queue.Full:
+                try:
+                    listener.get_nowait()
+                    listener.put_nowait(bar)
                 except (queue.Empty, queue.Full):
                     pass
 

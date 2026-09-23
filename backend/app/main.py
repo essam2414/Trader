@@ -22,6 +22,7 @@ from .routers.news import router as news_router
 from .routers.portfolio import router as portfolio_router
 from .routers.watchlist import router as watchlist_router
 from .scheduler import run_history_sync_job, run_snapshot_job
+from .services.chart_data import AlpacaChartDataSource
 from .services.portfolio_current import PortfolioCurrentCache
 from .trading212 import Trading212Client
 
@@ -46,6 +47,14 @@ async def lifespan(app: FastAPI):
     )
     app.state.alpaca_delayed_sip_market_data_client = (
         AlpacaMarketDataClient(settings.alpaca_api_key, settings.alpaca_api_secret, "delayed_sip")
+        if settings.alpaca_api_key and settings.alpaca_api_secret
+        else None
+    )
+    app.state.chart_data_source = (
+        AlpacaChartDataSource(
+            AlpacaMarketDataClient(settings.alpaca_api_key, settings.alpaca_api_secret, "sip"),
+            AlpacaMarketDataClient(settings.alpaca_api_key, settings.alpaca_api_secret, "iex"),
+        )
         if settings.alpaca_api_key and settings.alpaca_api_secret
         else None
     )

@@ -64,6 +64,54 @@ def test_delayed_sip_stream_tags_trades_with_its_feed():
     assert listener.get_nowait().feed == "delayed_sip"
 
 
+def test_stream_retains_and_corrects_live_bars_without_persisting_them():
+    stream = AlpacaIexTradeStream("key", "secret", max_symbols=1)
+    stream.sync_symbols(["AAPL"])
+    listener = stream.subscribe_bars()
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    stream._process_message(
+        json.dumps(
+            [
+                {
+                    "T": "b",
+                    "S": "AAPL",
+                    "t": timestamp,
+                    "o": 200,
+                    "h": 202,
+                    "l": 199,
+                    "c": 201,
+                    "v": 12,
+                }
+            ]
+        ),
+        {"AAPL"},
+    )
+    stream._process_message(
+        json.dumps(
+            [
+                {
+                    "T": "u",
+                    "S": "AAPL",
+                    "t": timestamp,
+                    "o": 200,
+                    "h": 203,
+                    "l": 199,
+                    "c": 202,
+                    "v": 14,
+                }
+            ]
+        ),
+        {"AAPL"},
+    )
+
+    first = listener.get_nowait()
+    corrected = listener.get_nowait()
+    assert first.is_updated is False
+    assert corrected.is_updated is True
+    assert stream.latest_bars(["AAPL"])["AAPL"] == [corrected]
+
+
 def test_sse_event_exposes_only_the_quote_patch_needed_by_the_browser():
     payload = sse_event(
         IexTrade("AAPL", Decimal("201.25"), datetime(2026, 9, 22, 14, tzinfo=timezone.utc), False),

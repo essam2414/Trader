@@ -126,6 +126,32 @@ export interface WatchlistEntry {
   quote: WatchlistQuote;
 }
 
+export type ChartRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "MAX";
+
+export interface StockChartBar {
+  startsAt: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  session: "pre_market" | "regular" | "after_hours" | "overnight";
+}
+
+export interface StockChart {
+  assetId: string;
+  symbol: string;
+  name: string;
+  range: ChartRange;
+  intervalSeconds: number;
+  canonicalFeed: "sip";
+  adjustment: "raw";
+  canonicalThrough: string;
+  delaySeconds: number;
+  canonicalBars: StockChartBar[];
+  provisionalIexBars: StockChartBar[];
+}
+
 export type MarketSessionPhase = "pre_market" | "regular" | "after_hours" | "overnight" | "closed";
 
 export interface MarketSession {

@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type DragEvent, type PointerEvent } from "react";
+import { useRouter } from "next/navigation";
 import { formatWatchlistPrice } from "../lib/format";
 import type { WatchlistEntry } from "../lib/types";
 import { WatchlistSparkline, type WatchlistTrend } from "./WatchlistSparkline";
@@ -74,10 +75,10 @@ function CachedLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">)
   );
 }
 
-function StockLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">) {
+export function StockLogo({ name, logoUrl, size = "default" }: Pick<WatchlistEntry, "name" | "logoUrl"> & { size?: "default" | "detail" }) {
   return (
     <span
-      className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#1b2227] text-xs font-bold tracking-tight text-neutral-100"
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden bg-[#1b2227] text-xs font-bold tracking-tight text-neutral-100 ${size === "detail" ? "h-10 w-10 rounded-xl text-xs sm:h-12 sm:w-12" : "h-11 w-11 rounded-[14px]"}`}
       >
         <span aria-hidden="true">{initials(name)}</span>
       <CachedLogo key={logoUrl} name={name} logoUrl={logoUrl} />
@@ -98,6 +99,7 @@ export function WatchlistItem({
   onPointerDragCancel,
   dragStyle,
 }: WatchlistItemProps) {
+  const router = useRouter();
   const trend = trendFor(entry);
   const chartTrend = chartTrendFor(entry);
   const percentChange = entry.quote.percentChange;
@@ -108,7 +110,7 @@ export function WatchlistItem({
     ? "cursor-grab select-none touch-none active:cursor-grabbing"
     : mode === "delete"
       ? "cursor-pointer hover:bg-rose-400/[0.07] focus-visible:bg-rose-400/[0.07]"
-      : "cursor-default hover:bg-neutral-800/40 focus-visible:bg-neutral-800/40";
+      : "cursor-pointer hover:bg-neutral-800/40 focus-visible:bg-neutral-800/40";
 
   return (
     <div
@@ -126,16 +128,21 @@ export function WatchlistItem({
       onPointerCancel={onPointerDragCancel}
       onClick={() => {
         if (mode === "delete") onRemove(entry.assetId);
+        if (mode === "default") router.push(`/watchlist/${encodeURIComponent(entry.assetId)}`);
       }}
       onKeyDown={(event) => {
         if (mode === "delete" && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onRemove(entry.assetId);
         }
+        if (mode === "default" && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          router.push(`/watchlist/${encodeURIComponent(entry.assetId)}`);
+        }
       }}
-      role={mode === "delete" ? "button" : undefined}
-      aria-label={mode === "delete" ? `Remove ${entry.symbol}` : undefined}
-      tabIndex={mode === "delete" ? 0 : undefined}
+      role={mode === "delete" ? "button" : mode === "default" ? "link" : undefined}
+      aria-label={mode === "delete" ? `Remove ${entry.symbol}` : mode === "default" ? `View ${entry.symbol} chart` : undefined}
+      tabIndex={mode === "delete" || mode === "default" ? 0 : undefined}
       style={dragStyle}
       className={`relative grid min-h-[68px] grid-cols-[44px_minmax(0,1fr)_104px_104px] items-center gap-x-3 rounded-xl px-2 py-2 transition-[background-color,opacity,box-shadow] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400 ${interactiveClass} ${isDragging ? "shadow-2xl shadow-black/70" : ""}`}
     >

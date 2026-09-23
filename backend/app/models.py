@@ -2,7 +2,17 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, LargeBinary, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    Float,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -97,4 +107,78 @@ class WatchlistEntry(Base):
     logo_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class MarketPriceBar(Base):
+    """An immutable raw, consolidated SIP observation for a watched asset."""
+
+    __tablename__ = "market_price_bars"
+    __table_args__ = (
+        UniqueConstraint(
+            "alpaca_asset_id",
+            "interval_seconds",
+            "starts_at",
+            name="uq_market_price_bar",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    open: Mapped[object] = mapped_column(Numeric(20, 8), nullable=False)
+    high: Mapped[object] = mapped_column(Numeric(20, 8), nullable=False)
+    low: Mapped[object] = mapped_column(Numeric(20, 8), nullable=False)
+    close: Mapped[object] = mapped_column(Numeric(20, 8), nullable=False)
+    volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    trade_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vwap: Mapped[object | None] = mapped_column(Numeric(20, 8), nullable=True)
+    session: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_feed: Mapped[str] = mapped_column(String(16), nullable=False, default="sip")
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class MarketCorporateAction(Base):
+    """A provider corporate-action record retained beside raw market observations."""
+
+    __tablename__ = "market_corporate_actions"
+
+    provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    alpaca_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    effective_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    raw_data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    provider_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class MarketHistorySyncState(Base):
+    """Watermarks for the resumable per-asset SIP-history backfill."""
+
+    __tablename__ = "market_history_sync_states"
+
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    five_minute_backfill_cursor: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    five_minute_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    one_minute_backfill_cursor: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    one_minute_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    daily_backfill_cursor: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    daily_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sip_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    corporate_actions_backfill_cursor: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    corporate_actions_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
