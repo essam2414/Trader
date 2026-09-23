@@ -49,7 +49,7 @@ describe("StockPriceChart", () => {
     expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
     expect(screen.getByText("NOW · NYSE")).toBeInTheDocument();
     expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$140.25");
-    expect(screen.getByText("2.37% today")).toHaveClass("text-[#32e64d]");
+    expect(screen.getByText("↗ 3.25 (2.37%) today")).toHaveClass("text-[#32e64d]");
     for (const range of ["1D", "1W", "1M", "3M", "1Y", "MAX"]) expect(screen.getByRole("button", { name: range })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/Raw SIP|SIP history|IEX tail|partial-market|15 min delayed|SIP close/i)).not.toBeInTheDocument();
@@ -73,9 +73,18 @@ describe("StockPriceChart", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () => input === "/api/watchlist" ? [watchlistEntry(135, 137)] : chart })));
     render(<StockPriceChart assetId="asset-now" />);
-    expect(await screen.findByText("1.46% today")).toHaveClass("text-[#ff4b55]");
+    expect(await screen.findByText("↘ 2.00 (1.46%) today")).toHaveClass("text-[#ff4b55]");
     FakeEventSource.sources[0].emit("trade", { price: 141.5, timestamp: "2026-09-23T14:31:00Z" });
     await waitFor(() => expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$141.50"));
+    expect(screen.getByText("↗ 4.50 (3.28%) today")).toHaveClass("text-[#32e64d]");
+  });
+
+  it("renders a neutral zero daily change from the unchanged previous close", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () => input === "/api/watchlist" ? [watchlistEntry(137, 137)] : chart })));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    expect(await screen.findByText("0.00 (0.00%) today")).toHaveClass("text-neutral-500");
   });
 
   it("shows an understated failure state", async () => {

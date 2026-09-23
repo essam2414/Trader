@@ -4,8 +4,128 @@ from datetime import datetime
 from decimal import Decimal
 
 import httpx
+import pytest
 
 from app.alpaca_market_data import AlpacaMarketDataClient
+
+
+@pytest.mark.parametrize(
+    ("current_price", "expected_change", "expected_percent"),
+    [
+        (Decimal("140.25"), Decimal("3.25"), (Decimal("3.25") / Decimal("137")) * Decimal("100")),
+        (Decimal("134.86"), Decimal("-2.14"), (Decimal("-2.14") / Decimal("137")) * Decimal("100")),
+        (Decimal("137"), Decimal("0"), Decimal("0")),
+    ],
+)
+def test_daily_change_uses_prior_trading_close_for_positive_negative_and_zero(
+    monkeypatch, current_price, expected_change, expected_percent
+):
+    client = AlpacaMarketDataClient("key", "secret", feed="iex")
+
+    def fake_request(_base_url: str, path: str, params: dict[str, str]):
+        if path == "/v2/stocks/snapshots":
+            return {"AAPL": {"latestTrade": {"p": str(current_price), "t": "2026-09-18T14:00:00Z"}}}
+        if path == "/v2/calendar":
+            return [
+                {"date": "2026-09-17", "open": "09:30", "close": "16:00"},
+                {"date": "2026-09-18", "open": "09:30", "close": "16:00"},
+            ]
+        if params["timeframe"] == "1Day":
+            assert params["start"] == "2026-09-17T00:00:00+00:00"
+            assert params["adjustment"] == "raw"
+            return {"bars": {"AAPL": [{"c": "137"}]}}
+        return {"bars": {"AAPL": []}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-18T14:00:00+00:00")
+    )["AAPL"]
+
+    assert quote.previous_close == Decimal("137")
+    assert quote.dollar_change == expected_change
+    assert quote.percent_change == expected_percent
+
+
+def test_monday_daily_change_uses_friday_final_close(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret", feed="iex")
+
+    def fake_request(_base_url: str, path: str, params: dict[str, str]):
+        if path == "/v2/stocks/snapshots":
+            return {"AAPL": {"latestTrade": {"p": "140.25", "t": "2026-09-21T14:00:00Z"}}}
+        if path == "/v2/calendar":
+            return [
+                {"date": "2026-09-18", "open": "09:30", "close": "16:00"},
+                {"date": "2026-09-21", "open": "09:30", "close": "16:00"},
+            ]
+        if params["timeframe"] == "1Day":
+            assert params["start"] == "2026-09-18T00:00:00+00:00"
+            return {"bars": {"AAPL": [{"c": "137"}]}}
+        return {"bars": {"AAPL": []}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-21T14:00:00+00:00")
+    )["AAPL"]
+
+    assert quote.previous_close == Decimal("137")
+    assert quote.dollar_change == Decimal("3.25")
+
+
+def test_holiday_daily_change_skips_the_non_trading_day(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret", feed="iex")
+
+    def fake_request(_base_url: str, path: str, params: dict[str, str]):
+        if path == "/v2/stocks/snapshots":
+            return {"AAPL": {"latestTrade": {"p": "140.25", "t": "2026-09-08T14:00:00Z"}}}
+        if path == "/v2/calendar":
+            return [
+                {"date": "2026-09-04", "open": "09:30", "close": "16:00"},
+                {"date": "2026-09-08", "open": "09:30", "close": "16:00"},
+            ]
+        if params["timeframe"] == "1Day":
+            assert params["start"] == "2026-09-04T00:00:00+00:00"
+            return {"bars": {"AAPL": [{"c": "137"}]}}
+        return {"bars": {"AAPL": []}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-08T14:00:00+00:00")
+    )["AAPL"]
+
+    assert quote.previous_close == Decimal("137")
+    assert quote.dollar_change == Decimal("3.25")
+
+
+def test_daily_change_requests_only_the_prior_session_official_close(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret", feed="iex")
+
+    def fake_request(_base_url: str, path: str, params: dict[str, str]):
+        if path == "/v2/stocks/snapshots":
+            return {"AAPL": {"latestTrade": {"p": "140.25", "t": "2026-09-23T14:00:00Z"}}}
+        if path == "/v2/calendar":
+            return [
+                {"date": "2026-09-22", "open": "09:30", "close": "16:00"},
+                {"date": "2026-09-23", "open": "09:30", "close": "16:00"},
+            ]
+        if params["timeframe"] == "1Day":
+            assert params == {
+                "symbols": "AAPL",
+                "timeframe": "1Day",
+                "start": "2026-09-22T00:00:00+00:00",
+                "end": "2026-09-23T00:00:00+00:00",
+                "adjustment": "raw",
+                "feed": "sip",
+            }
+            return {"bars": {"AAPL": [{"c": "137"}]}}
+        return {"bars": {"AAPL": []}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    quote = client.get_watchlist_market_data(
+        ["AAPL"], now=datetime.fromisoformat("2026-09-23T14:00:00+00:00")
+    )["AAPL"]
+
+    assert quote.previous_close == Decimal("137")
+    assert quote.percent_change == (Decimal("3.25") / Decimal("137")) * Decimal("100")
 
 
 def test_after_hours_change_uses_the_session_that_closed_before_the_source_price(monkeypatch):
@@ -49,6 +169,8 @@ def test_after_hours_change_uses_the_session_that_closed_before_the_source_price
         ("2026-09-18T20:00:00+00:00", Decimal("110")),
     ]
     assert quote.source_timestamp == datetime.fromisoformat("2026-09-18T20:10:00+00:00")
+    previous_close_request = next(params for _, params in requests if params.get("timeframe") == "1Day")
+    assert previous_close_request["start"] == "2026-09-17T00:00:00+00:00"
     assert any(params.get("adjustment") == "split" for _, params in requests)
 
 

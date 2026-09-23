@@ -61,14 +61,17 @@ function StockPriceSummary({ price, entry, className = "" }: { price: number | n
   const percentage = change !== null && change !== undefined && previousClose ? (change / previousClose) * 100 : entry?.quote.percentChange;
   const direction = change === null || change === undefined || change === 0 ? "neutral" : change > 0 ? "positive" : "negative";
   const directionClass = direction === "positive" ? "text-[#32e64d]" : direction === "negative" ? "text-[#ff4b55]" : "text-neutral-500";
+  const changeLabel = change !== null && change !== undefined && percentage !== null && percentage !== undefined
+    ? `${direction === "positive" ? "↗ " : direction === "negative" ? "↘ " : ""}${formatPriceNumber(Math.abs(change))} (${Math.abs(percentage).toFixed(2)}%) today`
+    : null;
   return (
     <div className={`mt-9 sm:mt-11 ${className}`}>
       <div className="flex flex-wrap items-baseline gap-x-24 gap-y-1">
         <p data-testid="stock-current-price" className="text-[clamp(2rem,3vw,2.5rem)] font-sans font-semibold leading-none tracking-tight text-white [font-variant-numeric:tabular-nums]">
           {price === null ? "—" : <><span className="mr-0.5 inline-block align-baseline text-[0.56em] tracking-normal">$</span>{formatPriceNumber(price)}</>}
         </p>
-        {change !== null && change !== undefined && percentage !== null && percentage !== undefined && (
-          <p className={`text-[clamp(2rem,3vw,2.5rem)] font-sans font-semibold leading-none tracking-tight [font-variant-numeric:tabular-nums] ${directionClass}`}>{Math.abs(percentage).toFixed(2)}% today</p>
+        {changeLabel && (
+          <p className={`text-[clamp(2rem,3vw,2.5rem)] font-sans font-semibold leading-none tracking-tight [font-variant-numeric:tabular-nums] ${directionClass}`}>{changeLabel}</p>
         )}
       </div>
     </div>
