@@ -47,6 +47,20 @@ class SparklinePoint:
 
 
 @dataclass(frozen=True)
+class HistoricalBar:
+    """Raw OHLCV data from one provider aggregation interval."""
+
+    starts_at: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    trade_count: int | None
+    vwap: Decimal | None
+
+
+@dataclass(frozen=True)
 class TradingSession:
     opens_at: datetime
     closes_at: datetime
@@ -286,43 +300,127 @@ class AlpacaMarketDataClient:
         )
 
     def _sessions_for_price(self, source_timestamp: datetime) -> tuple[date, date, bool]:
+        """Return the prior trading close and trading session for a quoted price.
+
+        The prior close is intentionally fixed for the whole trading day, including
+        pre-market and after-hours.  Alpaca's calendar supplies the business-day
+        boundaries, so weekends and market holidays cannot become baselines.
+        """
         timestamp = source_timestamp.astimezone(NEW_YORK)
         calendar = self._load_calendar(timestamp.date())
-        completed = [
-            session_date for session_date, session in calendar.items() if session.closes_at <= timestamp
-        ]
-        if not completed:
+        session_date = timestamp.date()
+        session = calendar.get(session_date)
+        if session is None:
+            future_sessions = [date_value for date_value in calendar if date_value > session_date]
+            current_session = min(future_sessions) if future_sessions else max(calendar)
+        else:
+            current_session = session_date
+
+        prior_sessions = [date_value for date_value in calendar if date_value < current_session]
+        if not prior_sessions:
             raise AlpacaUnavailableError("No completed regular session is available for this price")
-        previous_close_session = max(completed)
-        active_sessions = [
-            session_date
-            for session_date, session in calendar.items()
-            if session.opens_at <= timestamp <= session.closes_at
-        ]
-        if active_sessions:
-            return previous_close_session, max(active_sessions), False
-        return previous_close_session, previous_close_session, True
+        previous_close_session = max(prior_sessions)
+        is_extended = session is None or not (session.opens_at <= timestamp <= session.closes_at)
+        return previous_close_session, current_session, is_extended
 
     @staticmethod
     def _decimal(value: Any) -> Decimal:
         return Decimal(str(value))
 
     def _daily_closes(self, symbols: list[str], session_date: date) -> dict[str, Decimal]:
+        """Load the final Last Trade Price for one completed trading session."""
+        session_start = datetime.combine(session_date, clock_time.min, tzinfo=timezone.utc)
+        session_end = session_start + timedelta(days=1)
         payload = self._request(
             DATA_BASE_URL,
             "/v2/stocks/bars",
             {
                 "symbols": ",".join(symbols),
                 "timeframe": "1Day",
-                "start": session_date.isoformat(),
-                "end": (session_date + timedelta(days=1)).isoformat(),
-                "adjustment": "split",
-                "feed": self.feed,
+                # Alpaca treats date-only end values inclusively.  Explicit UTC
+                # instants prevent today's still-forming daily bar being chosen
+                # as the prior close.
+                "start": session_start.isoformat(),
+                "end": session_end.isoformat(),
+                "adjustment": "raw",
+                "feed": "sip",
             },
         )
         return {
             symbol: self._decimal(bars[-1]["c"]) for symbol, bars in payload.get("bars", {}).items() if bars
         }
+
+    def get_historical_bars(
+        self,
+        symbol: str,
+        start: datetime | None,
+        end: datetime | None,
+        timeframe: str,
+        adjustment: str = "raw",
+    ) -> list[HistoricalBar]:
+        """Load every page of one symbol's raw history in chronological order."""
+        params = {
+            "symbols": symbol,
+            "timeframe": timeframe,
+            "adjustment": adjustment,
+            "feed": self.feed,
+            "limit": "10000",
+            "sort": "asc",
+        }
+        if start is not None:
+            params["start"] = start.astimezone(timezone.utc).isoformat()
+        if end is not None:
+            params["end"] = end.astimezone(timezone.utc).isoformat()
+        result: list[HistoricalBar] = []
+        page_token: str | None = None
+        while True:
+            request_params = {**params, **({"page_token": page_token} if page_token else {})}
+            payload = self._request(DATA_BASE_URL, "/v2/stocks/bars", request_params)
+            grouped = payload.get("bars", {})
+            raw_bars = grouped.get(symbol, []) if isinstance(grouped, dict) else grouped
+            for bar in raw_bars:
+                result.append(
+                    HistoricalBar(
+                        starts_at=datetime.fromisoformat(bar["t"].replace("Z", "+00:00")),
+                        open=self._decimal(bar["o"]),
+                        high=self._decimal(bar["h"]),
+                        low=self._decimal(bar["l"]),
+                        close=self._decimal(bar["c"]),
+                        volume=int(bar["v"]),
+                        trade_count=int(bar["n"]) if bar.get("n") is not None else None,
+                        vwap=self._decimal(bar["vw"]) if bar.get("vw") is not None else None,
+                    )
+                )
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
+        return result
+
+    def get_corporate_actions(self, symbol: str, start: date, end: date) -> dict[str, Any]:
+        """Return the provider's complete corporate-action envelope for an asset."""
+        params = {
+            "symbols": symbol,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "data_quality": "complete",
+            "limit": "1000",
+            "sort": "asc",
+        }
+        result: dict[str, Any] = {}
+        page_token: str | None = None
+        while True:
+            request_params = {**params, **({"page_token": page_token} if page_token else {})}
+            payload = self._request(DATA_BASE_URL, "/v1/corporate-actions", request_params)
+            for key, value in payload.items():
+                if key == "next_page_token":
+                    continue
+                if isinstance(value, list):
+                    result.setdefault(key, []).extend(value)
+                else:
+                    result[key] = value
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return result
 
     @staticmethod
     def _sparkline_bucket(timestamp: datetime) -> datetime:

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from .alpaca_iex_stream import AlpacaIexTradeStream
 from .alpaca_market_data import AlpacaMarketDataClient
 from .db import SessionLocal
+from .services.chart_data import ChartDataSource
 from .services.portfolio_current import PortfolioCurrentCache
 from .trading212 import Trading212Client
 
@@ -44,6 +45,11 @@ def get_alpaca_market_data_client(request: Request) -> AlpacaMarketDataClient | 
 def get_alpaca_delayed_sip_market_data_client(request: Request) -> AlpacaMarketDataClient | None:
     """Return delayed SIP market data for extended-hours watchlist fallbacks."""
     return request.app.state.alpaca_delayed_sip_market_data_client
+
+
+def get_chart_data_source(request: Request) -> ChartDataSource | None:
+    """Return the on-demand chart data source, when Alpaca credentials are configured."""
+    return request.app.state.chart_data_source
 
 
 def get_alpaca_iex_trade_stream(request: Request) -> AlpacaIexTradeStream | None:

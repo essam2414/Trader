@@ -2,6 +2,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WatchlistItem } from "../WatchlistItem";
 
+const push = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
+
 describe("WatchlistItem", () => {
   it("visibly shades a default item while it is hovered", () => {
     const { container } = render(
@@ -45,6 +51,30 @@ describe("WatchlistItem", () => {
       "src",
       "/api/watchlist/asset-1/logo",
     );
+  });
+
+  it("opens a stock chart when a default watchlist item is clicked", () => {
+    render(
+      <WatchlistItem
+        entry={{
+          assetId: "asset-1",
+          symbol: "VRT",
+          name: "Vertiv Holdings",
+          exchange: "NYSE",
+          sortOrder: 0,
+          addedAt: "2026-09-18T13:30:00Z",
+          logoUrl: "/api/watchlist/asset-1/logo",
+          quote: { price: null, previousClose: null, dollarChange: null, percentChange: null, sparkline: [], feed: "iex", sourceTimestamp: null, sourceType: null, freshness: "unavailable", isExtendedHours: false, isDelayed: false, delaySeconds: null },
+        }}
+        mode="default"
+        isDragging={false}
+        isSavingOrder={false}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "View VRT chart" }));
+    expect(push).toHaveBeenCalledWith("/watchlist/asset-1");
   });
 
   it("retries a logo when the cache version changes after an earlier load failure", () => {

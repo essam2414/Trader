@@ -29,3 +29,16 @@ body {
 .dashboard-pane-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #737373;
 }
+
+/* Recharts makes its SVG surface focusable for keyboard navigation. Price charts
+   use a lightweight pointer tooltip instead, so the browser focus rectangle is
+   distracting when a user clicks the plot. */
+.stock-price-chart .recharts-wrapper:focus,
+.stock-price-chart .recharts-wrapper:focus-visible,
+.stock-price-chart .recharts-surface:focus,
+.stock-price-chart .recharts-surface:focus-visible,
+.stock-price-chart .recharts-surface *:focus,
+.stock-price-chart .recharts-surface *:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}

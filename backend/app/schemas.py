@@ -144,6 +144,30 @@ class WatchlistEntryOut(BaseModel):
     quote: WatchlistQuoteOut
 
 
+class StockChartBarOut(BaseModel):
+    startsAt: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    session: Literal["pre_market", "regular", "after_hours", "overnight"]
+
+
+class StockChartOut(BaseModel):
+    assetId: str
+    symbol: str
+    name: str
+    range: Literal["1D", "1W", "1M", "3M", "1Y", "MAX"]
+    intervalSeconds: int
+    canonicalFeed: Literal["sip"]
+    adjustment: Literal["raw"]
+    canonicalThrough: datetime
+    delaySeconds: int
+    canonicalBars: list[StockChartBarOut]
+    provisionalIexBars: list[StockChartBarOut]
+
+
 class MarketSessionOut(BaseModel):
     phase: Literal["pre_market", "regular", "after_hours", "overnight", "closed"]
     asOf: datetime
