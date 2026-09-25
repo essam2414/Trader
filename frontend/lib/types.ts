@@ -59,9 +59,16 @@ export interface Trade {
   holdingPeriodHours: number;
 }
 
+export interface RealizedPnlEvent {
+  takenAt: string;
+  realizedPnl: number;
+}
+
 export interface PortfolioMetrics {
   realizedPnl: number;
   trading212RealizedPnl: number;
+  totalWinningTradePnl: number;
+  totalLosingTradePnl: number;
   winRate: number;
   averageWinningTrade: number;
   averageLosingTrade: number;
@@ -84,6 +91,7 @@ export interface PortfolioMetrics {
   dividendIncome: number;
   dividendIncomeByTicker: Record<string, number>;
   trades: Trade[];
+  realizedPnlTimeline: RealizedPnlEvent[];
 }
 
 export interface WatchlistSearchResult {

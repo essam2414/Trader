@@ -18,8 +18,8 @@ function formatPriceNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
-function formatAxisPrice(value: number): string {
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: Math.abs(value) < 10 ? 2 : 0, maximumFractionDigits: 2 }).format(value);
+export function formatAxisPrice(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 }).format(value);
 }
 
 function formatTimestamp(timestamp: string, range: ChartRange): string {
@@ -104,6 +104,7 @@ export function StockPriceChart({ assetId }: StockPriceChartProps) {
   const [range, setRange] = useState<ChartRange>("1D");
   const [chart, setChart] = useState<StockChart | null>(null);
   const [entry, setEntry] = useState<WatchlistEntry | null>(null);
+  const [positionPrice, setPositionPrice] = useState<{ assetId: string; price: number | null } | null>(null);
   const [liveBars, setLiveBars] = useState<StockChartBar[]>([]);
   const [latestPrice, setLatestPrice] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +114,15 @@ export function StockPriceChart({ assetId }: StockPriceChartProps) {
     fetch("/api/watchlist", { signal: controller.signal })
       .then((response) => response.ok ? response.json() as Promise<WatchlistEntry[]> : Promise.reject(new Error("Watchlist unavailable")))
       .then((entries) => setEntry(entries.find((item) => item.assetId === assetId) ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [assetId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/watchlist/${encodeURIComponent(assetId)}/position`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<{ purchasePrice: number | null }> : Promise.reject(new Error("Position unavailable")))
+      .then((position) => setPositionPrice({ assetId, price: typeof position.purchasePrice === "number" && Number.isFinite(position.purchasePrice) ? position.purchasePrice : null }))
       .catch(() => undefined);
     return () => controller.abort();
   }, [assetId]);
@@ -149,24 +159,31 @@ export function StockPriceChart({ assetId }: StockPriceChartProps) {
   }, [assetId]);
 
   const data = useMemo(() => chart ? mergeDisplayBars(chart, liveBars) : [], [chart, liveBars]);
+  const purchasePrice = positionPrice?.assetId === assetId ? positionPrice.price : null;
   const isLoading = chart?.range !== range && error === null;
   const lastClose = data.at(-1)?.close ?? entry?.quote.price ?? null;
   const displayedPrice = latestPrice ?? entry?.quote.price ?? lastClose;
   const plotData = useMemo(() => {
-    if (displayedPrice === null || data.length === 0) return data;
     const lastIndex = data.length - 1;
-    return data.map((point, index) => index === lastIndex ? { ...point, close: displayedPrice } : point);
+    return data.map((point, index) => ({
+      ...point,
+      close: displayedPrice !== null && index === lastIndex ? displayedPrice : point.close,
+    }));
   }, [data, displayedPrice]);
   const yDomain = useMemo<[number, number]>(() => {
     const values = plotData.map((point) => point.close);
     if (displayedPrice !== null) values.push(displayedPrice);
+    if (purchasePrice !== null) values.push(purchasePrice);
     if (values.length === 0) return [0, 1];
     const minimum = Math.min(...values);
     const maximum = Math.max(...values);
     const paddingRatio = range === "MAX" ? 0.22 : 0.14;
     const padding = Math.max((maximum - minimum) * paddingRatio, Math.abs(maximum) * 0.004, 0.01);
     return [minimum - padding, maximum + padding];
-  }, [displayedPrice, plotData, range]);
+  }, [displayedPrice, plotData, purchasePrice, range]);
+  const purchaseLevelPercent = purchasePrice === null
+    ? null
+    : ((yDomain[1] - purchasePrice) / (yDomain[1] - yDomain[0])) * 100;
 
   return (
     <section aria-label="Stock price chart" className="stock-price-chart w-full font-sans">
@@ -189,6 +206,19 @@ export function StockPriceChart({ assetId }: StockPriceChartProps) {
                   <Area type="linear" dataKey="close" stroke="#00AEEF" strokeWidth={2.5} fill="url(#stockPriceFill)" dot={false} activeDot={false} />
                 </AreaChart>
               </ResponsiveContainer>
+            )}
+            {purchaseLevelPercent !== null && purchasePrice !== null && (
+              <div aria-hidden="false" className="pointer-events-none absolute top-5 right-[72px] bottom-1 left-0 z-10">
+                <div
+                  data-testid="purchase-price-line"
+                  role="img"
+                  aria-label={`Average purchase price ${formatPrice(purchasePrice)}`}
+                  className="absolute right-0 left-0 border-t border-dashed border-[#737373]"
+                  style={{ top: `${purchaseLevelPercent}%` }}
+                >
+                  <span aria-hidden="true" className="absolute right-1 bottom-1 rounded bg-[#171717]/85 px-1 text-[10px] text-neutral-400">Avg {formatPrice(purchasePrice)}</span>
+                </div>
+              </div>
             )}
           </div>
             <ChartRangeSelector range={range} onChange={(nextRange) => { setError(null); setRange(nextRange); }} />

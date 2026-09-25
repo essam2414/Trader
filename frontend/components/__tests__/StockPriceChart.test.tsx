@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
+import { formatAxisPrice, mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
 import type { StockChart, WatchlistEntry } from "../../lib/types";
 
 const chart: StockChart = {
@@ -92,6 +92,65 @@ describe("StockPriceChart", () => {
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve(input === "/api/watchlist" ? { ok: true, json: async () => [watchlistEntry()] } : { ok: false, json: async () => ({}) })));
     render(<StockPriceChart assetId="asset-now" />);
     expect(await screen.findByText("Price history unavailable.")).toBeInTheDocument();
+  });
+
+  it("shows the open-position level when price history is unavailable", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve(
+      input.endsWith("/position")
+        ? { ok: true, json: async () => ({ purchasePrice: 62.75, purchasePriceCurrency: "USD" }) }
+        : input === "/api/watchlist"
+          ? { ok: true, json: async () => [watchlistEntry()] }
+          : { ok: false, json: async () => ({}) },
+    )));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    expect(await screen.findByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $62.75");
+    expect(screen.getByTestId("purchase-price-line")).toHaveClass("border-dashed");
+  });
+
+  it("keeps the purchase level across ranges and live price updates", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position")
+        ? { purchasePrice: 1744.51, purchasePriceCurrency: "USD" }
+        : input === "/api/watchlist"
+          ? [watchlistEntry()]
+          : { ...chart, range: input.split("range=")[1] },
+    })));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    const line = await screen.findByTestId("purchase-price-line");
+    expect(line).toHaveAttribute("aria-label", "Average purchase price $1,744.51");
+    expect(Number.parseFloat(line.style.top)).toBeGreaterThan(0);
+    expect(Number.parseFloat(line.style.top)).toBeLessThan(100);
+    fireEvent.click(screen.getByRole("button", { name: "1W" }));
+    FakeEventSource.sources[0].emit("trade", { price: 150 });
+    await waitFor(() => expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$150.00"));
+    expect(screen.getByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $1,744.51");
+  });
+
+  it("keeps the purchase level when the overnight chart has no bars or quote", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position")
+        ? { purchasePrice: 62.75, purchasePriceCurrency: "USD" }
+        : input === "/api/watchlist"
+          ? [{ ...watchlistEntry(), quote: { ...watchlistEntry().quote, price: null } }]
+          : { ...chart, canonicalBars: [], provisionalIexBars: [] },
+    })));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    expect(await screen.findByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $62.75");
+    expect(screen.getByText("Price history unavailable.")).toBeInTheDocument();
+  });
+});
+
+describe("chart price labels", () => {
+  it("rounds axis values to three significant figures", () => {
+    expect(formatAxisPrice(123.456)).toBe("123");
+    expect(formatAxisPrice(1234.56)).toBe("1,230");
+    expect(formatAxisPrice(0.012345)).toBe("0.0123");
   });
 });
 

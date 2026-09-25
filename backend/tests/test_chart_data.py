@@ -7,7 +7,7 @@ import pytest
 
 from app.alpaca_market_data import NEW_YORK, HistoricalBar
 from app.config import settings
-from app.dependencies import get_chart_data_source
+from app.dependencies import get_chart_data_source, get_trading212_client
 from app.main import app
 from app.models import MarketPriceBar, WatchlistEntry
 from app.services.chart_data import (
@@ -151,6 +151,78 @@ def test_chart_route_keeps_its_response_contract_without_writing_price_bars(clie
     assert db_session.query(MarketPriceBar).count() == 0
 
 
+def test_position_route_returns_the_open_position_purchase_price_in_the_instrument_currency(
+    client, db_session
+):
+    entry = WatchlistEntry(alpaca_asset_id="asset-sndk", symbol="SNDK", name="SanDisk", exchange="NASDAQ")
+    db_session.add(entry)
+    db_session.commit()
+    trading212_client = FakeTrading212Client(
+        positions=[
+            {
+                "instrument": {"ticker": "SNDK_US_EQ", "currency": "USD"},
+                "averagePricePaid": 62.75,
+            }
+        ]
+    )
+    app.dependency_overrides[get_trading212_client] = lambda: trading212_client
+
+    response = client.get(
+        f"/api/watchlist/{entry.alpaca_asset_id}/position",
+        headers={"Authorization": f"Bearer {settings.dashboard_api_key}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["purchasePrice"] == 62.75
+    assert response.json()["purchasePriceCurrency"] == "USD"
+    assert trading212_client.get_positions_calls == 1
+
+
+def test_position_route_matches_sandisk_trading212_ticker(client, db_session):
+    entry = WatchlistEntry(alpaca_asset_id="asset-sndk", symbol="SNDK", name="SanDisk", exchange="NASDAQ")
+    db_session.add(entry)
+    db_session.commit()
+    app.dependency_overrides[get_trading212_client] = lambda: FakeTrading212Client(
+        positions=[
+            {
+                "instrument": {"ticker": "SNDK1_US_EQ", "currency": "USD"},
+                "averagePricePaid": 1744.51,
+            }
+        ]
+    )
+
+    response = client.get(
+        f"/api/watchlist/{entry.alpaca_asset_id}/position",
+        headers={"Authorization": f"Bearer {settings.dashboard_api_key}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"purchasePrice": 1744.51, "purchasePriceCurrency": "USD"}
+
+
+def test_position_price_is_available_when_market_history_is_unavailable(client, db_session):
+    entry = WatchlistEntry(alpaca_asset_id="asset-sndk", symbol="SNDK", name="SanDisk", exchange="NASDAQ")
+    db_session.add(entry)
+    db_session.commit()
+    app.dependency_overrides[get_chart_data_source] = lambda: None
+    app.dependency_overrides[get_trading212_client] = lambda: FakeTrading212Client(
+        positions=[
+            {
+                "instrument": {"ticker": "SNDK_US_EQ", "currency": "USD"},
+                "averagePricePaid": 62.75,
+            }
+        ]
+    )
+
+    response = client.get(
+        f"/api/watchlist/{entry.alpaca_asset_id}/position",
+        headers={"Authorization": f"Bearer {settings.dashboard_api_key}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"purchasePrice": 62.75, "purchasePriceCurrency": "USD"}
+
+
 def test_application_does_not_schedule_market_history_ingestion(client):
     scheduled_functions = {job.func.__name__ for job in client.app.state.scheduler.get_jobs()}
 
@@ -207,3 +279,13 @@ class FakeChartDataSource:
             session="regular",
         )
         return ChartSnapshot([bar], [bar], datetime(2026, 9, 23, 15, 45, tzinfo=timezone.utc))
+
+
+class FakeTrading212Client:
+    def __init__(self, positions: list[dict]):
+        self.positions = positions
+        self.get_positions_calls = 0
+
+    def get_positions(self) -> list[dict]:
+        self.get_positions_calls += 1
+        return self.positions

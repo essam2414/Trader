@@ -51,6 +51,11 @@ class PortfolioSnapshotOut(BaseModel):
     unrealizedProfitLoss: float
 
 
+class RealizedPnlEventOut(BaseModel):
+    takenAt: datetime
+    realizedPnl: float
+
+
 class TickerPerformanceOut(BaseModel):
     ticker: str
     realizedPnl: float
@@ -74,6 +79,8 @@ class TradeOut(BaseModel):
 class PortfolioMetricsOut(BaseModel):
     realizedPnl: float
     trading212RealizedPnl: float
+    totalWinningTradePnl: float
+    totalLosingTradePnl: float
     winRate: float
     averageWinningTrade: float
     averageLosingTrade: float
@@ -96,6 +103,7 @@ class PortfolioMetricsOut(BaseModel):
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]
     trades: list[TradeOut]
+    realizedPnlTimeline: list[RealizedPnlEventOut]
 
 
 class WatchlistSearchResult(BaseModel):
@@ -152,6 +160,11 @@ class StockChartBarOut(BaseModel):
     close: float
     volume: int
     session: Literal["pre_market", "regular", "after_hours", "overnight"]
+
+
+class WatchlistPositionPriceOut(BaseModel):
+    purchasePrice: float | None
+    purchasePriceCurrency: str | None
 
 
 class StockChartOut(BaseModel):

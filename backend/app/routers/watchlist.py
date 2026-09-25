@@ -2,11 +2,13 @@
 
 import json
 import queue
+import re
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -22,6 +24,7 @@ from ..dependencies import (
     get_alpaca_market_data_client,
     get_chart_data_source,
     get_db,
+    get_trading212_client,
 )
 from ..models import WatchlistEntry
 from ..schemas import (
@@ -31,6 +34,7 @@ from ..schemas import (
     WatchlistAdd,
     WatchlistEntryOut,
     WatchlistOrderUpdate,
+    WatchlistPositionPriceOut,
     WatchlistQuoteOut,
     WatchlistSearchResult,
 )
@@ -44,9 +48,35 @@ from ..services.watchlist import (
     reorder_entries,
     unavailable_quote,
 )
+from ..trading212 import Trading212Client
 from ..watchlist_price_resolver import WatchlistPriceResolver
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
+
+# Trading212 retains SanDisk's SNDK1 instrument code; Alpaca uses SNDK.
+TRADING212_SYMBOL_ALIASES = {"SNDK1": "SNDK"}
+
+
+def open_position_purchase_price(positions: list[dict], symbol: str) -> tuple[float | None, str | None]:
+    """Return an open position's native-currency average price for an Alpaca symbol."""
+    normalized_symbol = symbol.strip().upper()
+    candidate_symbols = (normalized_symbol,) + tuple(
+        alias for alias, canonical in TRADING212_SYMBOL_ALIASES.items() if canonical == normalized_symbol
+    )
+    for candidate_symbol in candidate_symbols:
+        for position in positions:
+            instrument = position.get("instrument", {})
+            ticker = instrument.get("ticker")
+            if not isinstance(ticker, str):
+                continue
+            position_symbol = re.sub(r"_[^_]+_EQ$", "", ticker, flags=re.IGNORECASE).strip().upper()
+            if position_symbol != candidate_symbol:
+                continue
+            try:
+                return float(position["averagePricePaid"]), instrument.get("currency")
+            except (KeyError, TypeError, ValueError):
+                return None, None
+    return None, None
 
 
 def logo_url(asset_id: str, checked_at) -> str:
@@ -352,6 +382,23 @@ def get_watchlist(
             )
         )
     return result
+
+
+@router.get("/watchlist/{asset_id}/position", response_model=WatchlistPositionPriceOut)
+def get_watchlist_position_price(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    trading212_client: Trading212Client = Depends(get_trading212_client),
+) -> WatchlistPositionPriceOut:
+    """Fetch the open-position level independently of market data and chart range."""
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    try:
+        price, currency = open_position_purchase_price(trading212_client.get_positions(), entry.symbol)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise HTTPException(status_code=502, detail="Could not load open position") from exc
+    return WatchlistPositionPriceOut(purchasePrice=price, purchasePriceCurrency=currency)
 
 
 @router.get("/watchlist/{asset_id}/chart", response_model=StockChartOut)

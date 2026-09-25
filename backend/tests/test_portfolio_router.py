@@ -237,6 +237,8 @@ def test_get_portfolio_metrics_returns_computed_metrics_from_synced_history(clie
     body = response.json()
     assert body["closedTradeCount"] == 1
     assert body["realizedPnl"] == pytest.approx(100.0)
+    assert body["totalWinningTradePnl"] == pytest.approx(100.0)
+    assert body["totalLosingTradePnl"] == pytest.approx(0.0)
     assert body["winRate"] == pytest.approx(1.0)
     assert "cashDrag" not in body
     assert len(body["trades"]) == 1
@@ -255,3 +257,45 @@ def test_get_portfolio_metrics_requires_auth(client):
     response = client.get("/api/portfolio/metrics")
 
     assert response.status_code == 401
+
+
+def test_get_portfolio_metrics_returns_chronological_realized_pnl_events(client, db_session):
+    db_session.add_all(
+        [
+            OrderFill(
+                id="later-sell",
+                order_id="later-sell",
+                ticker="AAPL_US_EQ",
+                side="SELL",
+                quantity=-1.0,
+                fill_price=120.0,
+                net_value=120.0,
+                realised_profit_loss=20.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            ),
+            OrderFill(
+                id="earlier-sell",
+                order_id="earlier-sell",
+                ticker="MSFT_US_EQ",
+                side="SELL",
+                quantity=-1.0,
+                fill_price=90.0,
+                net_value=90.0,
+                realised_profit_loss=-5.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/api/portfolio/metrics", headers=AUTH_HEADER)
+
+    assert response.status_code == 200
+    assert response.json()["realizedPnlTimeline"] == [
+        {"takenAt": "2026-01-01T00:00:00Z", "realizedPnl": -5.0},
+        {"takenAt": "2026-01-02T00:00:00Z", "realizedPnl": 20.0},
+    ]

@@ -6,7 +6,7 @@ import { formatCurrency } from "../../lib/format";
 import { PortfolioSummary } from "../PortfolioSummary";
 
 describe("PortfolioSummary", () => {
-  it("renders only realized P/L", () => {
+  it("stacks realized P/L with the cumulative good and bad trade totals", () => {
     render(
       <PortfolioSummary
         account={{
@@ -18,13 +18,17 @@ describe("PortfolioSummary", () => {
           realizedProfitLoss: 120,
           weeklyRealizedProfitLoss: 0,
         }}
+        totalWinningTradePnl={250}
+        totalLosingTradePnl={75}
       />
     );
 
     expect(screen.getByText(formatCurrency(120, "USD"))).toBeInTheDocument();
-    expect(screen.queryByText("Total value")).not.toBeInTheDocument();
-    expect(screen.queryByText("Cash available")).not.toBeInTheDocument();
-    expect(screen.queryByText("Unrealized P/L")).not.toBeInTheDocument();
+    expect(screen.getByText("Good trades")).toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(250, "USD"))).toHaveClass("text-[#32e64d]");
+    expect(screen.getByText("Bad trades")).toBeInTheDocument();
+    expect(screen.getByText(formatCurrency(75, "USD"))).toHaveClass("text-[#ff3b45]");
+    expect(screen.getByLabelText("Trade outcome summary")).toHaveClass("flex-col");
   });
 
   it("shows an unsigned realized loss while retaining its loss colour", () => {
@@ -39,10 +43,12 @@ describe("PortfolioSummary", () => {
           realizedProfitLoss: -120,
           weeklyRealizedProfitLoss: 0,
         }}
+        totalWinningTradePnl={0}
+        totalLosingTradePnl={120}
       />
     );
 
-    expect(screen.getByText(formatCurrency(120, "USD"))).toHaveClass("text-[#ff3b45]");
+    expect(screen.getByText("Realized P/L").nextElementSibling).toHaveClass("text-[#ff3b45]");
     expect(screen.queryByText(formatCurrency(-120, "USD"))).not.toBeInTheDocument();
   });
 });
