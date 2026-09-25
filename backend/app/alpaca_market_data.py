@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -16,7 +17,8 @@ import httpx
 NEW_YORK = ZoneInfo("America/New_York")
 DATA_BASE_URL = "https://data.alpaca.markets"
 TRADING_BASE_URL = "https://paper-api.alpaca.markets"
-TICKER_LOGO_BASE_URL = "https://api.eulerpool.com/api/1/logo/ticker"
+TICKER_LOGO_BASE_URL = "https://api.loadlogo.com/ticker"
+DOMAIN_LOGO_BASE_URL = "https://img.loadlogo.com"
 CATALOG_TTL_SECONDS = 24 * 60 * 60
 QUOTE_TTL_SECONDS = 60
 FRESH_AFTER_SECONDS = 5 * 60
@@ -192,31 +194,47 @@ class AlpacaMarketDataClient:
         return None
 
     def get_company_logo(self, symbol: str) -> tuple[bytes, str] | None:
-        """Fetch a company logo from the configured no-key ticker-logo provider."""
+        """Resolve a ticker to its domain, then fetch its image from LoadLogo."""
+        metadata = self._logo_request(f"{TICKER_LOGO_BASE_URL}/{quote(symbol, safe='')}", "application/json")
+        if metadata is None:
+            return None
+        try:
+            domain = metadata.json().get("domain")
+        except (ValueError, AttributeError):
+            return None
+        if not isinstance(domain, str) or not re.fullmatch(
+            r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain.lower()
+        ):
+            return None
+        image = self._logo_request(f"{DOMAIN_LOGO_BASE_URL}/{domain.lower()}", "image/*")
+        if image is None:
+            return None
+        content_type = image.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
+        if (
+            content_type not in {"image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"}
+            or not image.content
+        ):
+            return None
+        return image.content, content_type
+
+    @staticmethod
+    def _logo_request(url: str, accept: str) -> httpx.Response | None:
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                response = httpx.get(
-                    f"{TICKER_LOGO_BASE_URL}/{quote(symbol, safe='')}",
-                    headers={"Accept": "image/*"},
-                    timeout=10.0,
-                )
-                if response.status_code == 404:
+                response = httpx.get(url, headers={"Accept": accept}, timeout=3.0)
+                if response.status_code in {404, 422}:
                     return None
                 if response.status_code == 429 or response.status_code >= 500:
                     raise httpx.HTTPStatusError(
-                        "Transient Alpaca response", request=response.request, response=response
+                        "Transient logo provider response", request=response.request, response=response
                     )
                 if response.status_code >= 400:
                     return None
-                response.raise_for_status()
-                content_type = response.headers.get("content-type", "").split(";", maxsplit=1)[0].lower()
-                if not content_type.startswith("image/") or not response.content:
-                    return None
-                return response.content, content_type
+                return response
             except (httpx.RequestError, httpx.HTTPStatusError) as exc:
                 last_error = exc
-                if attempt < 2:
+                if attempt < 1:
                     time.sleep(0.2 * (2**attempt))
         raise AlpacaUnavailableError("Company logos are temporarily unavailable") from last_error
 

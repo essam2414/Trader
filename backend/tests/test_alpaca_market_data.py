@@ -291,24 +291,51 @@ def test_symbol_search_prioritizes_exact_and_prefix_ticker_matches(monkeypatch):
     assert [asset.symbol for asset in client.search_us_equities("aapl")] == ["AAPL", "AAPLX", "ZZZZ"]
 
 
-def test_company_logo_uses_the_ticker_logo_provider_without_credentials(monkeypatch):
+def test_company_logo_resolves_ticker_and_fetches_image_without_credentials(monkeypatch):
     client = AlpacaMarketDataClient("key", "secret")
-    request_details = {}
+    requests = []
 
     def fake_get(url, *, headers, timeout):
-        request_details.update(url=url, headers=headers, timeout=timeout)
+        requests.append((url, headers))
+        if url == "https://api.loadlogo.com/ticker/AAPL":
+            return httpx.Response(
+                200,
+                json={"symbol": "AAPL", "domain": "apple.com"},
+                request=httpx.Request("GET", url),
+            )
         return httpx.Response(
             200,
-            content=b"png-logo",
-            headers={"content-type": "image/png; charset=binary"},
+            content=b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+            headers={"content-type": "image/svg+xml"},
             request=httpx.Request("GET", url),
         )
 
     monkeypatch.setattr("app.alpaca_market_data.httpx.get", fake_get)
 
-    assert client.get_company_logo("AAPL") == (b"png-logo", "image/png")
-    assert request_details["url"] == "https://api.eulerpool.com/api/1/logo/ticker/AAPL"
-    assert request_details["headers"] == {"Accept": "image/*"}
+    assert client.get_company_logo("AAPL") == (
+        b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+        "image/svg+xml",
+    )
+    assert requests == [
+        ("https://api.loadlogo.com/ticker/AAPL", {"Accept": "application/json"}),
+        ("https://img.loadlogo.com/apple.com", {"Accept": "image/*"}),
+    ]
+
+
+def test_company_logo_rejects_unsafe_provider_domain(monkeypatch):
+    client = AlpacaMarketDataClient("key", "secret")
+
+    def fake_get(url, *, headers, timeout):
+        assert url == "https://api.loadlogo.com/ticker/AAPL"
+        return httpx.Response(
+            200,
+            json={"symbol": "AAPL", "domain": "localhost"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("app.alpaca_market_data.httpx.get", fake_get)
+
+    assert client.get_company_logo("AAPL") is None
 
 
 def client_asset(asset_id: str, symbol: str, name: str, exchange: str):

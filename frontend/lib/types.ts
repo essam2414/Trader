@@ -171,12 +171,55 @@ export interface MarketSession {
   isEarlyClose: boolean;
 }
 
-export interface NewsArticle {
+export interface CatalystCard {
   id: number;
   headline: string;
-  summary: string | null;
-  createdAt: string;
-  updatedAt: string;
+  shortSummary: string;
   watchlistSymbols: string[];
-  rawData: Record<string, unknown>;
+  category: string;
+  direction: "upside" | "downside" | "mixed" | "unclear";
+  status: "ready" | "pending";
+  releasedAt: string | null;
+  firstSeenAt: string;
+  updatedAt: string;
+}
+
+export interface CatalystDetail extends CatalystCard {
+  detailSummary: string;
+  relevanceReason: string;
+  keyFacts: string[];
+  unknowns: string[];
+  sources: {
+    title: string;
+    provider: string;
+    url: string;
+    publishedAt: string | null;
+  }[];
+}
+
+export interface NewsStatus {
+  lastSuccessfulRunAt: string | null;
+  failedSources: string[];
+  pendingSummaries: number;
+}
+
+export interface MarketEvent {
+  id: string;
+  title: string;
+  category: string;
+  scope: "watchlist" | "us_market";
+  eventDate: string;
+  previousEventDate: string | null;
+  startsAt: string | null;
+  timePrecision: "exact" | "date_only" | "window";
+  dateStatus: "confirmed" | "estimated" | "changed" | "cancelled";
+  watchlistSymbols: string[];
+  sourceUrl: string;
+  lastVerifiedAt: string;
+}
+
+export interface EventRefreshResult {
+  refreshedSources: number;
+  refreshedEvents: number;
+  failedSources: string[];
 }

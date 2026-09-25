@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from ..dependencies import (
     get_trading212_client,
 )
 from ..models import WatchlistEntry
+from ..scheduler import run_events_job, run_news_job
 from ..schemas import (
     SparklinePoint,
     StockChartBarOut,
@@ -466,6 +467,7 @@ def stream_stock_chart(
 @router.post("/watchlist", response_model=WatchlistEntryOut, status_code=201)
 def add_watchlist_entry(
     payload: WatchlistAdd,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
     stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
@@ -479,6 +481,9 @@ def add_watchlist_entry(
     except LookupError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     sync_stream_symbols(db, stream, delayed_sip_stream)
+    if settings.news_enabled:
+        background_tasks.add_task(run_news_job)
+        background_tasks.add_task(run_events_job)
     quote = unavailable_quote(market_data.feed)
     return WatchlistEntryOut(
         assetId=entry.alpaca_asset_id,
@@ -535,7 +540,11 @@ def get_watchlist_logo(
     return Response(
         content=logo_data,
         media_type=content_type,
-        headers={"Cache-Control": "private, max-age=604800, immutable"},
+        headers={
+            "Cache-Control": "private, max-age=604800, immutable",
+            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

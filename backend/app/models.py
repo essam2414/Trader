@@ -1,16 +1,19 @@
 """SQLAlchemy ORM models for the Trading212 portfolio dashboard backend."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Date,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     LargeBinary,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -182,3 +185,91 @@ class MarketHistorySyncState(Base):
     corporate_actions_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class NewsSourceItem(Base):
+    """A bounded, attributed observation from one external source."""
+
+    __tablename__ = "news_source_items"
+    __table_args__ = (UniqueConstraint("provider", "source_key", name="uq_news_source_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    candidate_symbols: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class NewsStory(Base):
+    """One source-backed development shown as a single dashboard card."""
+
+    __tablename__ = "news_stories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    headline: Mapped[str] = mapped_column(Text, nullable=False)
+    short_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    detail_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    relevance_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    key_facts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    unknowns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, default="unclear")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class NewsStorySource(Base):
+    __tablename__ = "news_story_sources"
+
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), primary_key=True)
+    source_item_id: Mapped[int] = mapped_column(ForeignKey("news_source_items.id"), primary_key=True)
+
+
+class NewsStoryStock(Base):
+    __tablename__ = "news_story_stocks"
+
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), primary_key=True)
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+
+class MarketEvent(Base):
+    """An explicitly dated future development, not a forecast of its outcome."""
+
+    __tablename__ = "market_events"
+
+    event_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    previous_event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    time_precision: Mapped[str] = mapped_column(String(16), nullable=False)
+    date_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    last_verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MarketEventStock(Base):
+    __tablename__ = "market_event_stocks"
+
+    event_key: Mapped[str] = mapped_column(ForeignKey("market_events.event_key"), primary_key=True)
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+
+class NewsSyncState(Base):
+    __tablename__ = "news_sync_states"
+
+    source_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)

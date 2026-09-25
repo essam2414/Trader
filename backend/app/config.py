@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     alpaca_watchlist_limit: int = 20
     snapshot_interval_minutes: int = 15
     history_sync_interval_minutes: int = 1
+    news_enabled: bool = True
+    news_evening_hour_et: int = 20
+    news_evening_minute_et: int = 30
+    news_morning_hour_et: int = 8
+    news_morning_minute_et: int = 55
+    news_ir_feeds_json: str = "{}"
+    news_ir_event_feeds_json: str = "{}"
+    news_exposures_json: str = "{}"
+    news_rss_feeds_json: str = "{}"
+    sec_user_agent: str | None = None
+    alpha_vantage_api_key: str | None = None
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen3:4b"
 
 
 settings = Settings()
