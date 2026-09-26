@@ -15,6 +15,11 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 # application's lifespan. Individual market-data tests construct their own fakes.
 os.environ["ALPACA_API_KEY"] = ""
 os.environ["ALPACA_API_SECRET"] = ""
+os.environ["FINNHUB_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_NEWS_ENABLED"] = "false"
+os.environ["NEWS_ENABLED"] = "false"
+os.environ["NEWS_EXPOSURES_JSON"] = "{}"
 
 import pytest
 from sqlalchemy import create_engine

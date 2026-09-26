@@ -38,8 +38,9 @@ function displayName(name: string): string {
     .replaceAll(",", "")
     .replace(/\s+(?:Class|Series)\s+[A-Z0-9]+(?:\s+(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?))?$/i, "")
     .replace(/\s+(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?)$/i, "")
-    .replace(/\s+Holdings?(?:\s+Co(?:mpany)?\.?)?$/i, "")
     .replace(/\s+(?:Incorporated|Inc\.?|Corporation|Corp\.?|Ltd\.?|PLC)$/i, "")
+    .replace(/\s+Group Holdings?$/i, "")
+    .replace(/\s+Holdings?(?:\s+Co(?:mpany)?\.?)?$/i, "")
     .trim() || name;
 }
 

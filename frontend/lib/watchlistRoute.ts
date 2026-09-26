@@ -64,8 +64,12 @@ export async function watchlistLogoBackendRequest(path: string): Promise<NextRes
     const headers = new Headers();
     const contentType = response.headers.get("content-type");
     const cacheControl = response.headers.get("cache-control");
+    const contentSecurityPolicy = response.headers.get("content-security-policy");
+    const contentTypeOptions = response.headers.get("x-content-type-options");
     if (contentType) headers.set("Content-Type", contentType);
     if (cacheControl) headers.set("Cache-Control", cacheControl);
+    if (contentSecurityPolicy) headers.set("Content-Security-Policy", contentSecurityPolicy);
+    if (contentTypeOptions) headers.set("X-Content-Type-Options", contentTypeOptions);
     return new NextResponse(response.body, { status: response.status, headers });
   } catch {
     return new NextResponse(null, { status: 502 });

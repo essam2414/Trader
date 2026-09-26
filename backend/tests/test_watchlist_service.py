@@ -1,5 +1,7 @@
 """Persistence rules for the dashboard watchlist."""
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -111,7 +113,47 @@ def test_company_logo_is_cached_in_the_watchlist_entry(db_session):
     db_session.refresh(entry)
     assert entry.logo_data == b"png-logo"
     assert entry.logo_content_type == "image/png"
-    assert entry.logo_provider == "eulerpool"
+    assert entry.logo_provider == "loadlogo"
 
     assert get_cached_logo(db_session, client, entry) == (b"png-logo", "image/png")
     assert client.logo_requests == 1
+
+
+def test_new_watchlist_entry_has_its_logo_before_it_is_returned(db_session):
+    client = FakeAlpacaClient()
+
+    entry = add_entry(db_session, client, "asset-aapl", limit=2)
+
+    assert entry.logo_data == b"png-logo"
+    assert entry.logo_content_type == "image/png"
+    assert client.logo_requests == 1
+
+
+def test_previous_provider_miss_is_retried_for_a_saved_entry(db_session):
+    entry = WatchlistEntry(
+        alpaca_asset_id="asset-aapl",
+        symbol="AAPL",
+        name="Apple Inc.",
+        exchange="NASDAQ",
+        logo_provider="eulerpool",
+        logo_checked_at=datetime.now(timezone.utc),
+    )
+    db_session.add(entry)
+    db_session.commit()
+
+    logo = get_cached_logo(db_session, FakeAlpacaClient(), entry)
+
+    assert logo == (b"png-logo", "image/png")
+    assert entry.logo_provider == "loadlogo"
+
+
+def test_temporary_logo_failure_does_not_prevent_later_retry(db_session):
+    class UnavailableLogoClient(FakeAlpacaClient):
+        def get_company_logo(self, symbol):
+            raise RuntimeError("Provider unavailable")
+
+    entry = add_entry(db_session, UnavailableLogoClient(), "asset-aapl", limit=2)
+
+    assert entry.logo_data is None
+    assert entry.logo_checked_at is None
+    assert get_cached_logo(db_session, FakeAlpacaClient(), entry) == (b"png-logo", "image/png")

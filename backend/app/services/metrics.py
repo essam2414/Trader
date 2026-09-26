@@ -136,6 +136,8 @@ class TickerPerformance:
 class PortfolioMetrics:
     realized_pnl: float
     trading212_realized_pnl: float
+    total_winning_trade_pnl: float
+    total_losing_trade_pnl: float
     win_rate: float
     average_winning_trade: float
     average_losing_trade: float
@@ -199,15 +201,29 @@ def compute_portfolio_metrics(
     trades_by_ticker: dict[str, list[ClosedTrade]] = defaultdict(list)
     for trade in trades:
         trades_by_ticker[trade.ticker].append(trade)
-    performance_by_ticker = [
-        TickerPerformance(
-            ticker=ticker,
-            realized_pnl=sum(t.pnl for t in ticker_trades),
-            trade_count=len(ticker_trades),
-            win_rate=sum(1 for t in ticker_trades if t.pnl > 0) / len(ticker_trades),
+
+    # Trading212 supplies authoritative realised P/L on each sell fill. The
+    # local FIFO reconstruction remains useful for the individual closed-trade
+    # history, but it can differ from the broker's cost-basis, fee, or FX
+    # treatment. The per-ticker table must reconcile to the broker record.
+    realised_pnl_by_ticker: dict[str, float] = defaultdict(float)
+    for fill in fills:
+        if fill.side == "SELL":
+            realised_pnl_by_ticker[fill.ticker] += fill.realised_profit_loss
+
+    performance_by_ticker = []
+    for ticker in sorted(set(trades_by_ticker) | set(realised_pnl_by_ticker)):
+        ticker_trades = trades_by_ticker[ticker]
+        performance_by_ticker.append(
+            TickerPerformance(
+                ticker=ticker,
+                realized_pnl=realised_pnl_by_ticker[ticker],
+                trade_count=len(ticker_trades),
+                win_rate=(sum(1 for t in ticker_trades if t.pnl > 0) / len(ticker_trades))
+                if ticker_trades
+                else 0.0,
+            )
         )
-        for ticker, ticker_trades in sorted(trades_by_ticker.items())
-    ]
 
     dividend_income = sum(d.amount for d in dividends)
     dividend_income_by_ticker: dict[str, float] = defaultdict(float)
@@ -217,6 +233,8 @@ def compute_portfolio_metrics(
     return PortfolioMetrics(
         realized_pnl=sum(t.pnl for t in trades),
         trading212_realized_pnl=sum(f.realised_profit_loss for f in fills if f.side == "SELL"),
+        total_winning_trade_pnl=gross_profit,
+        total_losing_trade_pnl=gross_loss,
         win_rate=win_rate,
         average_winning_trade=average_winning_trade,
         average_losing_trade=average_losing_trade,

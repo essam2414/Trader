@@ -15,7 +15,7 @@ class WatchlistLimitError(ValueError):
 
 
 LOGO_RECHECK_INTERVAL = timedelta(days=7)
-LOGO_PROVIDER = "eulerpool"
+LOGO_PROVIDER = "loadlogo"
 
 
 def add_entry(session, client: AlpacaMarketDataClient, asset_id: str, limit: int) -> WatchlistEntry:
@@ -38,6 +38,7 @@ def add_entry(session, client: AlpacaMarketDataClient, asset_id: str, limit: int
     session.add(entry)
     session.commit()
     session.refresh(entry)
+    get_cached_logo(session, client, entry)
     return entry
 
 
@@ -78,29 +79,27 @@ def refresh_metadata(session, client: AlpacaMarketDataClient, entries: list[Watc
 def get_cached_logo(
     session, client: AlpacaMarketDataClient, entry: WatchlistEntry
 ) -> tuple[bytes, str] | None:
-    """Return the persisted logo, fetching it once from Alpaca when needed.
+    """Return the persisted logo, fetching it from the logo provider when needed.
 
-    Failed lookups are recorded too, avoiding a provider call for every page refresh
-    when an asset does not have a logo in Alpaca's catalogue.
+    Missing logos are recorded to avoid repeated lookups. Temporary provider
+    failures remain retryable.
     """
     if entry.logo_data and entry.logo_content_type:
         return entry.logo_data, entry.logo_content_type
 
     now = datetime.now(timezone.utc)
-    if (
-        entry.logo_provider == LOGO_PROVIDER
-        and entry.logo_checked_at
-        and now - entry.logo_checked_at <= LOGO_RECHECK_INTERVAL
-    ):
+    checked_at = entry.logo_checked_at
+    if checked_at and checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    if entry.logo_provider == LOGO_PROVIDER and checked_at and now - checked_at <= LOGO_RECHECK_INTERVAL:
         return None
 
-    entry.logo_provider = LOGO_PROVIDER
-    entry.logo_checked_at = now
     try:
         logo = client.get_company_logo(entry.symbol)
     except Exception:
-        session.commit()
         return None
+    entry.logo_provider = LOGO_PROVIDER
+    entry.logo_checked_at = now
     if logo is not None:
         entry.logo_data, entry.logo_content_type = logo
     session.commit()

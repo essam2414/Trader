@@ -59,9 +59,16 @@ export interface Trade {
   holdingPeriodHours: number;
 }
 
+export interface RealizedPnlEvent {
+  takenAt: string;
+  realizedPnl: number;
+}
+
 export interface PortfolioMetrics {
   realizedPnl: number;
   trading212RealizedPnl: number;
+  totalWinningTradePnl: number;
+  totalLosingTradePnl: number;
   winRate: number;
   averageWinningTrade: number;
   averageLosingTrade: number;
@@ -84,6 +91,7 @@ export interface PortfolioMetrics {
   dividendIncome: number;
   dividendIncomeByTicker: Record<string, number>;
   trades: Trade[];
+  realizedPnlTimeline: RealizedPnlEvent[];
 }
 
 export interface WatchlistSearchResult {
@@ -126,6 +134,11 @@ export interface WatchlistEntry {
   quote: WatchlistQuote;
 }
 
+export interface WatchlistPositionPrice {
+  purchasePrice: number | null;
+  purchasePriceCurrency: string | null;
+}
+
 export type ChartRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "MAX";
 
 export interface StockChartBar {
@@ -163,12 +176,73 @@ export interface MarketSession {
   isEarlyClose: boolean;
 }
 
-export interface NewsArticle {
+export interface CatalystCard {
   id: number;
   headline: string;
-  summary: string | null;
-  createdAt: string;
-  updatedAt: string;
+  shortSummary: string;
   watchlistSymbols: string[];
-  rawData: Record<string, unknown>;
+  category: string;
+  direction: "upside" | "downside" | "unclear";
+  status: "ready" | "pending";
+  releasedAt: string | null;
+  firstSeenAt: string;
+  updatedAt: string;
+}
+
+export interface CatalystDetail extends CatalystCard {
+  detailSummary: string;
+  relevanceReason: string;
+  keyFacts: string[];
+  unknowns: string[];
+  sources: {
+    title: string;
+    provider: string;
+    url: string;
+    publishedAt: string | null;
+  }[];
+}
+
+export interface NewsStatus {
+  lastSuccessfulRunAt: string | null;
+  failedSources: string[];
+  sourceErrors: SourceError[];
+  pendingSummaries: number;
+}
+
+export interface SourceError {
+  source: string;
+  message: string;
+}
+
+export interface MarketEvent {
+  id: string;
+  title: string;
+  category: string;
+  scope: "watchlist" | "us_market";
+  eventDate: string;
+  previousEventDate: string | null;
+  startsAt: string | null;
+  timePrecision: "exact" | "date_only" | "window";
+  dateStatus: "confirmed" | "estimated" | "changed" | "cancelled";
+  watchlistSymbols: string[];
+  sourceUrl: string;
+  lastVerifiedAt: string;
+}
+
+export interface EventRefreshResult {
+  refreshedSources: number;
+  refreshedEvents: number;
+  failedSources: string[];
+}
+
+export interface EventStatus {
+  lastSuccessfulRunAt: string | null;
+  failedSources: string[];
+  sourceErrors: SourceError[];
+}
+
+export interface NewsRefreshResult {
+  refreshedSources: number;
+  refreshedStories: number;
+  failedSources: string[];
 }

@@ -1,12 +1,17 @@
-"""Watchlist-only Alpaca news behaviour."""
+"""Persisted watchlist news routes and existing Alpaca parsing."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from app.alpaca_market_data import AlpacaMarketDataClient, NewsArticle
+from app.alpaca_market_data import AlpacaMarketDataClient
 from app.config import settings
-from app.dependencies import get_alpaca_market_data_client
-from app.main import app
-from app.models import WatchlistEntry
+from app.models import (
+    NewsSourceItem,
+    NewsStory,
+    NewsStorySource,
+    NewsStoryStock,
+    NewsSyncState,
+    WatchlistEntry,
+)
 
 
 def test_news_client_filters_duplicate_ids_and_orders_last_updated_first(monkeypatch):
@@ -25,64 +30,92 @@ def test_news_client_filters_duplicate_ids_and_orders_last_updated_first(monkeyp
         }
 
     monkeypatch.setattr(client, "_request", fake_request)
-
     articles = client.get_watchlist_news(["MSFT", "AAPL"])
 
     assert [item.article_id for item in articles] == [2, 1]
     assert articles[1].headline == "Older revised"
     assert requested["path"] == "/v1beta1/news"
-    assert requested["params"] == {
-        "symbols": "AAPL,MSFT",
-        "limit": "50",
-        "sort": "desc",
-        "include_content": "true",
-    }
 
 
-def test_news_route_returns_only_watchlist_symbols_and_full_alpaca_record(client, db_session):
+def test_news_routes_show_one_sourced_story_only_for_current_watchlist(client, db_session):
+    published = datetime(2026, 9, 21, 9, tzinfo=timezone.utc)
     db_session.add_all(
         [
             WatchlistEntry(alpaca_asset_id="asset-aapl", symbol="AAPL", name="Apple", exchange="NASDAQ"),
             WatchlistEntry(alpaca_asset_id="asset-msft", symbol="MSFT", name="Microsoft", exchange="NASDAQ"),
         ]
     )
-    db_session.commit()
-    article_data = {
-        "id": 42,
-        "headline": "Apple and Microsoft",
-        "source": "Benzinga",
-        "symbols": ["AAPL", "MSFT", "SPY"],
-    }
-    article = NewsArticle(
-        article_id=42,
-        headline="Apple and Microsoft",
-        summary="A summary",
-        created_at=datetime.fromisoformat("2026-09-21T09:00:00+00:00"),
-        updated_at=datetime.fromisoformat("2026-09-21T09:30:00+00:00"),
-        symbols=["AAPL", "MSFT", "SPY"],
-        raw_data=article_data,
+    db_session.add(
+        NewsStory(
+            id=42,
+            headline="Apple and Microsoft announce agreement",
+            short_summary="The companies announced an agreement.",
+            detail_summary="The terms were announced in a release.",
+            relevance_reason="Both are named.",
+            key_facts=["Both companies are named."],
+            unknowns=[],
+            category="deal",
+            direction="unclear",
+            status="ready",
+            released_at=published,
+            first_seen_at=published,
+            updated_at=published,
+        )
     )
+    db_session.add(
+        NewsSourceItem(
+            id=7,
+            provider="company",
+            source_key="release-7",
+            url="https://example.com/release",
+            title="Agreement release",
+            excerpt="The companies announced an agreement.",
+            candidate_symbols=["AAPL", "MSFT"],
+            published_at=published,
+            first_seen_at=published,
+            content_hash="a" * 64,
+        )
+    )
+    db_session.flush()
+    db_session.add_all(
+        [
+            NewsStoryStock(story_id=42, alpaca_asset_id="asset-aapl"),
+            NewsStoryStock(story_id=42, alpaca_asset_id="asset-msft"),
+            NewsStorySource(story_id=42, source_item_id=7),
+        ]
+    )
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
 
-    class FakeAlpacaClient:
-        def get_watchlist_news(self, symbols):
-            assert symbols == ["AAPL", "MSFT"]
-            return [article]
+    cards = client.get("/api/news", headers=headers)
+    assert cards.status_code == 200
+    assert len(cards.json()) == 1
+    assert cards.json()[0]["watchlistSymbols"] == ["AAPL", "MSFT"]
+    assert cards.json()[0]["releasedAt"] == "2026-09-21T09:00:00Z"
+    assert "rawData" not in cards.json()[0]
 
-    app.dependency_overrides[get_alpaca_market_data_client] = lambda: FakeAlpacaClient()
-    response = client.get("/api/news", headers={"Authorization": f"Bearer {settings.dashboard_api_key}"})
+    detail = client.get("/api/news/42", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["sources"][0]["url"] == "https://example.com/release"
+    assert detail.json()["detailSummary"] == "The terms were announced in a release."
 
-    assert response.status_code == 200
-    assert response.json() == [
-        {
-            "id": 42,
-            "headline": "Apple and Microsoft",
-            "summary": "A summary",
-            "createdAt": "2026-09-21T09:00:00Z",
-            "updatedAt": "2026-09-21T09:30:00Z",
-            "watchlistSymbols": ["AAPL", "MSFT"],
-            "rawData": article_data,
-        }
-    ]
+    story = db_session.get(NewsStory, 42)
+    story.direction = "mixed"
+    db_session.commit()
+    assert client.get("/api/news", headers=headers).json()[0]["direction"] == "unclear"
+    assert client.get("/api/news/42", headers=headers).json()["direction"] == "unclear"
+
+    story.status = "expired"
+    db_session.commit()
+    assert client.get("/api/news", headers=headers).json() == []
+    assert client.get("/api/news/42", headers=headers).status_code == 404
+
+    story.status = "ready"
+    db_session.commit()
+    db_session.query(WatchlistEntry).delete()
+    db_session.commit()
+    assert client.get("/api/news", headers=headers).json() == []
+    assert client.get("/api/news/42", headers=headers).status_code == 404
 
 
 def article(article_id, headline, created_at, updated_at, symbols):
@@ -94,3 +127,46 @@ def article(article_id, headline, created_at, updated_at, symbols):
         "updated_at": updated_at,
         "symbols": symbols,
     }
+
+
+def test_news_and_events_status_use_separate_collection_times(client, db_session):
+    db_session.add_all(
+        [
+            NewsSyncState(source_key="sec", last_success_at=datetime(2026, 9, 25, 8, tzinfo=timezone.utc)),
+            NewsSyncState(
+                source_key="events:fed",
+                last_success_at=datetime(2026, 9, 24, 7, tzinfo=timezone.utc),
+                last_error="HTTP 429 for https://example.com/calendar?token=private-value",
+            ),
+        ]
+    )
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+
+    news = client.get("/api/news/status", headers=headers)
+    events = client.get("/api/events/status", headers=headers)
+
+    assert news.json()["lastSuccessfulRunAt"] == "2026-09-25T08:00:00Z"
+    assert news.json()["failedSources"] == []
+    assert news.json()["sourceErrors"] == []
+    assert events.json()["lastSuccessfulRunAt"] == "2026-09-24T07:00:00Z"
+    assert events.json()["failedSources"] == ["events:fed"]
+    assert events.json()["sourceErrors"] == [{"source": "events:fed", "message": "HTTP 429 for [source URL]"}]
+    assert "private-value" not in events.text
+
+
+def test_manual_news_refresh_only_runs_news_job(client, monkeypatch):
+    from app.routers import news as news_router
+
+    monkeypatch.setattr(settings, "news_enabled", True)
+    calls = []
+    monkeypatch.setattr(news_router, "run_news_job", lambda: calls.append("news") or {"sec": 2})
+    monkeypatch.setattr(news_router, "run_events_job", lambda: calls.append("events") or {})
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+
+    result = client.post("/api/news/refresh", headers=headers)
+
+    assert result.status_code == 200
+    assert result.json()["refreshedSources"] == 1
+    assert result.json()["refreshedStories"] == 2
+    assert calls == ["news"]

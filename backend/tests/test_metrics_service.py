@@ -261,6 +261,8 @@ def test_compute_portfolio_metrics_aggregates_trades_dividends_and_drawdown():
     assert metrics.closed_trade_count == 3
     assert metrics.realized_pnl == pytest.approx(57.0)  # 98 + 10 - 51
     assert metrics.trading212_realized_pnl == pytest.approx(57.0)
+    assert metrics.total_winning_trade_pnl == pytest.approx(108.0)
+    assert metrics.total_losing_trade_pnl == pytest.approx(51.0)
     assert metrics.win_rate == pytest.approx(2 / 3)
     assert metrics.average_winning_trade == pytest.approx(54.0)  # (98+10)/2
     assert metrics.average_losing_trade == pytest.approx(-51.0)
@@ -302,7 +304,15 @@ def test_compute_portfolio_metrics_aggregates_trades_dividends_and_drawdown():
 def test_compute_portfolio_metrics_recalculates_ticker_performance_after_a_new_closed_trade():
     fills = [
         _fill("1", "AAPL_US_EQ", "BUY", 10.0, 100.0, datetime(2026, 1, 1, tzinfo=timezone.utc)),
-        _fill("2", "AAPL_US_EQ", "SELL", 10.0, 110.0, datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        _fill(
+            "2",
+            "AAPL_US_EQ",
+            "SELL",
+            10.0,
+            110.0,
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+            realised_profit_loss=100.0,
+        ),
     ]
 
     initial = compute_portfolio_metrics(fills, [], [])
@@ -314,7 +324,15 @@ def test_compute_portfolio_metrics_recalculates_ticker_performance_after_a_new_c
     fills.extend(
         [
             _fill("3", "AAPL_US_EQ", "BUY", 5.0, 50.0, datetime(2026, 1, 3, tzinfo=timezone.utc)),
-            _fill("4", "AAPL_US_EQ", "SELL", 5.0, 40.0, datetime(2026, 1, 4, tzinfo=timezone.utc)),
+            _fill(
+                "4",
+                "AAPL_US_EQ",
+                "SELL",
+                5.0,
+                40.0,
+                datetime(2026, 1, 4, tzinfo=timezone.utc),
+                realised_profit_loss=-50.0,
+            ),
         ]
     )
 
@@ -325,10 +343,33 @@ def test_compute_portfolio_metrics_recalculates_ticker_performance_after_a_new_c
     assert updated_aapl.win_rate == pytest.approx(0.5)
 
 
+def test_compute_portfolio_metrics_uses_broker_realized_pnl_for_ticker_performance():
+    """Ticker performance must reconcile to Trading212's realised P/L, not a local FIFO estimate."""
+    fills = [
+        _fill("1", "AAPL_US_EQ", "BUY", 10.0, 100.0, datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        _fill(
+            "2",
+            "AAPL_US_EQ",
+            "SELL",
+            10.0,
+            110.0,
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+            realised_profit_loss=95.0,
+        ),
+    ]
+
+    metrics = compute_portfolio_metrics(fills, [], [])
+
+    assert metrics.performance_by_ticker[0].ticker == "AAPL_US_EQ"
+    assert metrics.performance_by_ticker[0].realized_pnl == pytest.approx(95.0)
+
+
 def test_compute_portfolio_metrics_handles_no_closed_trades():
     metrics = compute_portfolio_metrics([], [], [])
 
     assert metrics.closed_trade_count == 0
+    assert metrics.total_winning_trade_pnl == 0.0
+    assert metrics.total_losing_trade_pnl == 0.0
     assert metrics.win_rate == 0.0
     assert metrics.profit_factor is None
     assert metrics.payoff_ratio is None

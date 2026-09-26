@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
+import { calculateRangeReturn, formatAxisPrice, mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
 import type { StockChart, WatchlistEntry } from "../../lib/types";
 
 const chart: StockChart = {
@@ -41,15 +41,17 @@ class FakeEventSource {
 describe("StockPriceChart", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); FakeEventSource.sources = []; });
 
-  it("renders the compact header, current price, positive movement, and every bottom range", async () => {
+  it("keeps the stock identity, price, and smaller daily change in one overview row", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () => input === "/api/watchlist" ? [watchlistEntry()] : chart })));
     render(<StockPriceChart assetId="asset-now" />);
 
-    expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
+    const overview = await screen.findByRole("group", { name: "Stock overview" });
+    expect(overview).toHaveClass("flex-nowrap");
+    expect(within(overview).getByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
     expect(screen.getByText("NOW · NYSE")).toBeInTheDocument();
-    expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$140.25");
-    expect(screen.getByText("↗ 3.25 (2.37%) today")).toHaveClass("text-[#32e64d]");
+    expect(within(overview).getByTestId("stock-current-price")).toHaveTextContent("$140.25");
+    expect(within(overview).getByText("↗ 3.25 (2.37%) today")).toHaveClass("text-sm", "text-[#32e64d]");
     for (const range of ["1D", "1W", "1M", "3M", "1Y", "MAX"]) expect(screen.getByRole("button", { name: range })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/Raw SIP|SIP history|IEX tail|partial-market|15 min delayed|SIP close/i)).not.toBeInTheDocument();
@@ -92,6 +94,96 @@ describe("StockPriceChart", () => {
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve(input === "/api/watchlist" ? { ok: true, json: async () => [watchlistEntry()] } : { ok: false, json: async () => ({}) })));
     render(<StockPriceChart assetId="asset-now" />);
     expect(await screen.findByText("Price history unavailable.")).toBeInTheDocument();
+  });
+
+  it("shows the open-position level when price history is unavailable", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve(
+      input.endsWith("/position")
+        ? { ok: true, json: async () => ({ purchasePrice: 62.75, purchasePriceCurrency: "USD" }) }
+        : input === "/api/watchlist"
+          ? { ok: true, json: async () => [watchlistEntry()] }
+          : { ok: false, json: async () => ({}) },
+    )));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    const line = await screen.findByTestId("purchase-price-line");
+    expect(line).toHaveAttribute("aria-label", "Average purchase price $62.75");
+    expect(screen.getByTestId("purchase-price-line")).toHaveClass("border-dashed");
+    expect(line.parentElement).toHaveStyle({ right: "72px" });
+  });
+
+  it("renders a compact chart with a controlled range and no separate stream or range controls", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const fetchMock = vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position") ? { purchasePrice: null } : { ...chart, range: "1M" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StockPriceChart assetId="asset-now" range="1M" compact watchlistEntry={watchlistEntry()} live={{ bars: [], latestPrice: 140.25 }} purchasePriceOverride={138} />);
+
+    expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Selected range return")).toHaveTextContent("+3.28%"));
+    expect(screen.getByLabelText("Selected range return").parentElement).toHaveClass("font-sans", "[font-variant-numeric:tabular-nums]");
+    expect(screen.getByTestId("stock-chart-plot")).toHaveClass("-ml-2", "-mr-3", "w-[calc(100%+1.25rem)]");
+    expect(screen.getByTestId("purchase-price-line").parentElement).toHaveStyle({ right: "48px" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/watchlist/asset-now/chart?range=1M", expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist", expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist/asset-now/position", expect.anything());
+    expect(screen.queryByRole("button", { name: "1M" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Stock analysis" })).not.toBeInTheDocument();
+    expect(FakeEventSource.sources).toHaveLength(0);
+  });
+
+  it("keeps the purchase level across ranges and live price updates", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position")
+        ? { purchasePrice: 1744.51, purchasePriceCurrency: "USD" }
+        : input === "/api/watchlist"
+          ? [watchlistEntry()]
+          : { ...chart, range: input.split("range=")[1] },
+    })));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    const line = await screen.findByTestId("purchase-price-line");
+    expect(line).toHaveAttribute("aria-label", "Average purchase price $1,744.51");
+    expect(Number.parseFloat(line.style.top)).toBeGreaterThan(0);
+    expect(Number.parseFloat(line.style.top)).toBeLessThan(100);
+    fireEvent.click(screen.getByRole("button", { name: "1W" }));
+    FakeEventSource.sources[0].emit("trade", { price: 150 });
+    await waitFor(() => expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$150.00"));
+    expect(screen.getByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $1,744.51");
+  });
+
+  it("keeps the purchase level when the overnight chart has no bars or quote", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position")
+        ? { purchasePrice: 62.75, purchasePriceCurrency: "USD" }
+        : input === "/api/watchlist"
+          ? [{ ...watchlistEntry(), quote: { ...watchlistEntry().quote, price: null } }]
+          : { ...chart, canonicalBars: [], provisionalIexBars: [] },
+    })));
+    render(<StockPriceChart assetId="asset-now" />);
+
+    expect(await screen.findByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $62.75");
+    expect(screen.getByText("Price history unavailable.")).toBeInTheDocument();
+  });
+});
+
+describe("chart price labels", () => {
+  it("rounds axis values to three significant figures", () => {
+    expect(formatAxisPrice(123.456)).toBe("123");
+    expect(formatAxisPrice(1234.56)).toBe("1,230");
+    expect(formatAxisPrice(0.012345)).toBe("0.0123");
+  });
+});
+
+describe("selected range return", () => {
+  it("compares the first visible bar open with the latest plotted price", () => {
+    expect(calculateRangeReturn([bar("2026-09-23T14:00:00Z", 100), bar("2026-09-23T14:15:00Z", 101)], 109.78)).toBeCloseTo(10);
+    expect(calculateRangeReturn([], 100)).toBeNull();
+    expect(calculateRangeReturn([{ ...bar("2026-09-23T14:00:00Z", 100), open: 0 }], 110)).toBeNull();
   });
 });
 

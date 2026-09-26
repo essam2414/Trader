@@ -22,6 +22,7 @@ from ..schemas import (
     PortfolioMetricsOut,
     PortfolioSnapshotOut,
     Position,
+    RealizedPnlEventOut,
     TickerPerformanceOut,
     TradeOut,
 )
@@ -122,6 +123,8 @@ def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
     return PortfolioMetricsOut(
         realizedPnl=metrics.realized_pnl,
         trading212RealizedPnl=metrics.trading212_realized_pnl,
+        totalWinningTradePnl=metrics.total_winning_trade_pnl,
+        totalLosingTradePnl=metrics.total_losing_trade_pnl,
         winRate=metrics.win_rate,
         averageWinningTrade=metrics.average_winning_trade,
         averageLosingTrade=metrics.average_losing_trade,
@@ -165,5 +168,15 @@ def get_portfolio_metrics(db: Session = Depends(get_db)) -> PortfolioMetricsOut:
                 holdingPeriodHours=t.holding_period.total_seconds() / 3600,
             )
             for t in metrics.closed_trades
+        ],
+        realizedPnlTimeline=[
+            RealizedPnlEventOut(
+                takenAt=fill.filled_at
+                if fill.filled_at.tzinfo
+                else fill.filled_at.replace(tzinfo=timezone.utc),
+                realizedPnl=fill.realised_profit_loss,
+            )
+            for fill in fills
+            if fill.side == "SELL"
         ],
     )

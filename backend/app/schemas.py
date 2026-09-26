@@ -6,7 +6,7 @@ frontend-facing JSON contract for the portfolio router.
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -51,6 +51,11 @@ class PortfolioSnapshotOut(BaseModel):
     unrealizedProfitLoss: float
 
 
+class RealizedPnlEventOut(BaseModel):
+    takenAt: datetime
+    realizedPnl: float
+
+
 class TickerPerformanceOut(BaseModel):
     ticker: str
     realizedPnl: float
@@ -74,6 +79,8 @@ class TradeOut(BaseModel):
 class PortfolioMetricsOut(BaseModel):
     realizedPnl: float
     trading212RealizedPnl: float
+    totalWinningTradePnl: float
+    totalLosingTradePnl: float
     winRate: float
     averageWinningTrade: float
     averageLosingTrade: float
@@ -96,6 +103,7 @@ class PortfolioMetricsOut(BaseModel):
     dividendIncome: float
     dividendIncomeByTicker: dict[str, float]
     trades: list[TradeOut]
+    realizedPnlTimeline: list[RealizedPnlEventOut]
 
 
 class WatchlistSearchResult(BaseModel):
@@ -154,6 +162,11 @@ class StockChartBarOut(BaseModel):
     session: Literal["pre_market", "regular", "after_hours", "overnight"]
 
 
+class WatchlistPositionPriceOut(BaseModel):
+    purchasePrice: float | None
+    purchasePriceCurrency: str | None
+
+
 class StockChartOut(BaseModel):
     assetId: str
     symbol: str
@@ -177,13 +190,74 @@ class MarketSessionOut(BaseModel):
     isEarlyClose: bool
 
 
-class NewsArticleOut(BaseModel):
-    """A unique Alpaca article connected to at least one saved watchlist symbol."""
-
+class CatalystCardOut(BaseModel):
     id: int
     headline: str
-    summary: str | None
-    createdAt: datetime
-    updatedAt: datetime
+    shortSummary: str
     watchlistSymbols: list[str]
-    rawData: dict[str, Any]
+    category: str
+    direction: Literal["upside", "downside", "unclear"]
+    status: str
+    releasedAt: datetime | None
+    firstSeenAt: datetime
+    updatedAt: datetime
+
+
+class CatalystSourceOut(BaseModel):
+    title: str
+    provider: str
+    url: str
+    publishedAt: datetime | None
+
+
+class CatalystDetailOut(CatalystCardOut):
+    detailSummary: str
+    relevanceReason: str
+    keyFacts: list[str]
+    unknowns: list[str]
+    sources: list[CatalystSourceOut]
+
+
+class SourceErrorOut(BaseModel):
+    source: str
+    message: str
+
+
+class NewsStatusOut(BaseModel):
+    lastSuccessfulRunAt: datetime | None
+    failedSources: list[str]
+    sourceErrors: list[SourceErrorOut]
+    pendingSummaries: int
+
+
+class MarketEventOut(BaseModel):
+    id: str
+    title: str
+    category: str
+    scope: str
+    eventDate: str
+    previousEventDate: str | None
+    startsAt: datetime | None
+    timePrecision: str
+    dateStatus: str
+    watchlistSymbols: list[str]
+    sourceUrl: str
+    lastVerifiedAt: datetime
+
+
+class EventRefreshOut(BaseModel):
+    refreshedSources: int
+    refreshedEvents: int
+    failedSources: list[str]
+
+
+class EventStatusOut(BaseModel):
+    lastSuccessfulRunAt: datetime | None
+    failedSources: list[str]
+    sourceErrors: list[SourceErrorOut]
+
+
+class NewsRefreshOut(BaseModel):
+    refreshedSources: int
+    refreshedStories: int
+    failedSources: list[str]

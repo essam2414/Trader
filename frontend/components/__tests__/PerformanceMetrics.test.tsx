@@ -11,6 +11,8 @@ import { PerformanceMetrics } from "../PerformanceMetrics";
 const METRICS: PortfolioMetrics = {
   realizedPnl: 57,
   trading212RealizedPnl: 57,
+  totalWinningTradePnl: 108,
+  totalLosingTradePnl: 51,
   winRate: 0.6666666666666666,
   averageWinningTrade: 54,
   averageLosingTrade: -51,
@@ -33,6 +35,7 @@ const METRICS: PortfolioMetrics = {
   dividendIncome: 10,
   dividendIncomeByTicker: {},
   trades: [],
+  realizedPnlTimeline: [],
 };
 
 describe("PerformanceMetrics", () => {
