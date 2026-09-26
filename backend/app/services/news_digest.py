@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import NewsSourceItem, NewsStory, NewsStorySource, NewsStoryStock, NewsSyncState, WatchlistEntry
-from .news_ai import Evidence, LocalNewsAnalyser
+from .news_ai import Evidence, OpenAINewsAnalyser
 from .news_sources import (
     NewsHttp,
     SourceItem,
@@ -21,6 +21,7 @@ from .news_sources import (
     canonical_url,
     company_match,
     configured_feeds,
+    finnhub_items,
     gdelt_exposure_items,
     gdelt_items,
     rss_items,
@@ -57,6 +58,8 @@ CATEGORY_WORDS = {
     "guidance": ("guidance", "outlook", "forecast"),
     "deal": ("deal", "contract", "agreement", "partnership", "acquisition", "merger"),
     "analyst": ("price target", "analyst", "upgrade", "downgrade"),
+    "financing": ("offering", "dilution", "form s-3", "form f-3", "form s-1", "form 424b5", "form 424b4"),
+    "insider": ("insider sale", "insider selling", "form 4"),
     "regulatory": ("fda", "approval", "lawsuit", "investigation", "recall"),
     "index": ("s&p 500", "nasdaq 100", "index addition", "join the index"),
     "geopolitical": ("tariff", "sanction", "ceasefire", "war", "oil supply"),
@@ -67,7 +70,14 @@ CATALYST_WORDS = re.compile(
     r"approval|fda|trial|recall|investigation|lawsuit|settlement|index|s&p 500|nasdaq 100|"
     r"sanction|tariff|ceasefire|war|oil supply|oil price|opec|buyback|dividend|offering|"
     r"financing|debt|ceo|cfo|layoff|bankrupt|restatement|trillion|valuation|market cap|"
-    r"form 8-k|form 6-k|form 10-q|form 10-k|launch|unveil|introduce|order|award|export restriction)\b",
+    r"form 8-k|form 6-k|form 10-q|form 10-k|form 4|form s-3(?:asr)?|"
+    r"form f-3(?:asr)?|form s-1|"
+    r"form 424b4|form 424b5|dilution|dilutive|secondary offering|shelf registration|"
+    r"at-the-market|insider sale|insider selling|share sale|chip supply|wafer|advanced packaging|"
+    r"gpu supply|data center|hyperscaler|cloud spending|software spending|saas demand|"
+    r"optical transceiver|co-packaged optics|800g optics|1\.6t optics|hbm|dram prices|nand prices|"
+    r"enterprise ssd|power distribution|grid constraints|"
+    r"capital expenditure|capex|launch|unveil|introduce|order|award|export restriction)\b",
     re.I,
 )
 
@@ -188,7 +198,7 @@ def _numbers(value: str) -> set[str]:
 
 
 def _analyse_story(
-    db: Session, story: NewsStory, entries: list[WatchlistEntry], analyser: LocalNewsAnalyser, now: datetime
+    db: Session, story: NewsStory, entries: list[WatchlistEntry], analyser: OpenAINewsAnalyser, now: datetime
 ) -> None:
     source_ids = [row.source_item_id for row in db.query(NewsStorySource).filter_by(story_id=story.id)]
     sources = db.query(NewsSourceItem).filter(NewsSourceItem.id.in_(source_ids)).all()
@@ -237,7 +247,7 @@ def ingest_items(
     db: Session,
     items: list[SourceItem],
     entries: list[WatchlistEntry],
-    analyser: LocalNewsAnalyser,
+    analyser: OpenAINewsAnalyser,
     now: datetime,
     analysis_budget: list[int] | None = None,
 ) -> int:
@@ -286,7 +296,9 @@ def ingest_items(
         ):
             story.released_at = item.published_at
         db.flush()
-        if analysis_budget is None or analysis_budget[0] > 0:
+        if analysis_budget is not None and analysis_budget[0] <= 0:
+            story.status = "pending"
+        else:
             _analyse_story(db, story, entries, analyser, now)
             if analysis_budget is not None:
                 analysis_budget[0] -= 1
@@ -298,7 +310,7 @@ def ingest_items(
 def retry_pending(
     db: Session,
     entries: list[WatchlistEntry],
-    analyser: LocalNewsAnalyser,
+    analyser: OpenAINewsAnalyser,
     now: datetime,
     budget: list[int],
 ) -> int:
@@ -338,7 +350,7 @@ def _record_source_result(db: Session, key: str, now: datetime, error: Exception
 
 def run_news_sync(
     db: Session,
-    analyser: LocalNewsAnalyser | None = None,
+    analyser: OpenAINewsAnalyser | None = None,
     now: datetime | None = None,
     http: NewsHttp | None = None,
 ) -> dict[str, int]:
@@ -346,7 +358,7 @@ def run_news_sync(
     entries = db.query(WatchlistEntry).all()
     if not entries:
         return {}
-    analyser = analyser or LocalNewsAnalyser()
+    analyser = analyser or OpenAINewsAnalyser()
     owned_http = http is None
     http = http or NewsHttp()
     successes = [
@@ -360,11 +372,20 @@ def run_news_sync(
         else now - timedelta(days=7)
     )
     results: dict[str, int] = {}
-    budget = [20 if not isinstance(analyser, LocalNewsAnalyser) or analyser.available() else 0]
     jobs: dict[str, Callable[[], list[SourceItem]]] = {}
     try:
+        watched_symbols = {entry.symbol.upper() for entry in entries}
         for provider, url in configured_feeds().items():
-            jobs[f"rss:{provider}"] = lambda url=url, provider=provider: rss_items(http, url, provider)
+            ir_symbol = provider.removeprefix("ir_").upper() if provider.startswith("ir_") else ""
+            symbols = (ir_symbol,) if ir_symbol in watched_symbols else ()
+            jobs[f"rss:{provider}"] = lambda url=url, provider=provider, symbols=symbols: rss_items(
+                http, url, provider, symbols
+            )
+        if settings.finnhub_api_key:
+            for entry in entries:
+                jobs[f"finnhub:{entry.symbol}"] = lambda symbol=entry.symbol: finnhub_items(
+                    http, symbol, cutoff, now
+                )
         jobs.update(
             {
                 "sec": lambda: sec_items(http, entries, cutoff),
@@ -377,12 +398,16 @@ def run_news_sync(
         for key, job in jobs.items():
             try:
                 items = job()
-                results[key] = ingest_items(db, items, entries, analyser, now, budget)
+                results[key] = ingest_items(db, items, entries, analyser, now, [0])
                 _record_source_result(db, key, now, None)
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
                 db.rollback()
                 logger.warning("News source %s failed: %s", key, exc)
                 _record_source_result(db, key, now, exc)
+        pending_count = db.query(NewsStory).filter_by(status="pending").count()
+        budget = [
+            pending_count if not isinstance(analyser, OpenAINewsAnalyser) or analyser.available() else 0
+        ]
         results["pending_retried"] = retry_pending(db, entries, analyser, now, budget)
     finally:
         if owned_http:

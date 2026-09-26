@@ -235,6 +235,61 @@ def chart_stream_events(stream: AlpacaTradeStream, symbol: str) -> Iterator[str]
         stream.unsubscribe_bars(bar_listener)
 
 
+def multi_chart_stream_events(stream: AlpacaTradeStream, symbols: list[str]) -> Iterator[str]:
+    """Send selected chart updates over one browser connection."""
+    selected = set(symbols)
+    trade_listener = stream.subscribe()
+    bar_listener = stream.subscribe_bars()
+    last_keepalive = time.monotonic()
+    try:
+        initial_bars = stream.latest_bars(symbols, datetime.now(timezone.utc) - timedelta(minutes=20))
+        initial_trades = stream.latest_trades(symbols)
+        for symbol in symbols:
+            snapshot: dict[str, object] = {
+                "symbol": symbol,
+                "bars": [chart_bar_payload(bar) for bar in initial_bars.get(symbol, [])],
+            }
+            trade = initial_trades.get(symbol)
+            if trade is not None:
+                snapshot["latestTrade"] = {
+                    "price": float(trade.price),
+                    "timestamp": trade.timestamp.isoformat(),
+                }
+            yield "event: live_snapshot\ndata: " + json.dumps(snapshot) + "\n\n"
+        while True:
+            for index in range(100):
+                try:
+                    bar = bar_listener.get(timeout=0.25) if index == 0 else bar_listener.get_nowait()
+                except queue.Empty:
+                    break
+                if bar.symbol in selected:
+                    yield (
+                        "event: bar\ndata: "
+                        + json.dumps({**chart_bar_payload(bar), "symbol": bar.symbol})
+                        + "\n\n"
+                    )
+            latest_trades: dict[str, StreamTrade] = {}
+            for _ in range(1000):
+                try:
+                    trade = trade_listener.get_nowait()
+                except queue.Empty:
+                    break
+                if trade.symbol in selected:
+                    latest_trades[trade.symbol] = trade
+            for trade in latest_trades.values():
+                yield (
+                    "event: trade\ndata: "
+                    + json.dumps({"symbol": trade.symbol, "price": float(trade.price)})
+                    + "\n\n"
+                )
+            if time.monotonic() - last_keepalive >= 15:
+                yield ": keepalive\n\n"
+                last_keepalive = time.monotonic()
+    finally:
+        stream.unsubscribe(trade_listener)
+        stream.unsubscribe_bars(bar_listener)
+
+
 def _selected_trade(
     iex_stream: AlpacaTradeStream,
     delayed_sip_stream: AlpacaTradeStream,
@@ -385,6 +440,26 @@ def get_watchlist(
     return result
 
 
+@router.get("/watchlist/positions", response_model=dict[str, WatchlistPositionPriceOut])
+def get_watchlist_position_prices(
+    db: Session = Depends(get_db),
+    trading212_client: Trading212Client = Depends(get_trading212_client),
+) -> dict[str, WatchlistPositionPriceOut]:
+    """Load all watchlist purchase levels with one Trading212 request."""
+    entries = db.query(WatchlistEntry).all()
+    try:
+        positions = trading212_client.get_positions()
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise HTTPException(status_code=502, detail="Could not load open positions") from exc
+    result = {}
+    for entry in entries:
+        price, currency = open_position_purchase_price(positions, entry.symbol)
+        result[entry.alpaca_asset_id] = WatchlistPositionPriceOut(
+            purchasePrice=price, purchasePriceCurrency=currency
+        )
+    return result
+
+
 @router.get("/watchlist/{asset_id}/position", response_model=WatchlistPositionPriceOut)
 def get_watchlist_position_price(
     asset_id: str,
@@ -459,6 +534,28 @@ def stream_stock_chart(
         raise HTTPException(status_code=404, detail="Watchlist entry not found")
     return StreamingResponse(
         chart_stream_events(require_stream(stream), entry.symbol),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/watchlist/charts/stream")
+def stream_selected_stock_charts(
+    asset_ids: str = Query(alias="assetIds", min_length=1),
+    db: Session = Depends(get_db),
+    stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
+) -> StreamingResponse:
+    ids = asset_ids.split(",")
+    if len(ids) > settings.alpaca_watchlist_limit or any(not asset_id for asset_id in ids):
+        raise HTTPException(status_code=400, detail="Invalid chart selection")
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="Duplicate chart selection")
+    entries = db.query(WatchlistEntry).filter(WatchlistEntry.alpaca_asset_id.in_(ids)).all()
+    by_id = {entry.alpaca_asset_id: entry for entry in entries}
+    if len(by_id) != len(ids):
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    return StreamingResponse(
+        multi_chart_stream_events(require_stream(stream), [by_id[asset_id].symbol for asset_id in ids]),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

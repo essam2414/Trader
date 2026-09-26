@@ -8,9 +8,13 @@ from app.models import WatchlistEntry
 from app.services.news_sources import (
     ArticleMetadata,
     alpaca_items,
+    company_match,
+    finnhub_items,
+    form4_sale_details,
     gdelt_exposure_items,
     rss_items,
     same_company_name,
+    sec_items,
     spglobal_index_items,
 )
 
@@ -42,6 +46,23 @@ def test_rss_release_retains_original_publication_time_and_summary():
     assert items[0].url == "https://example.com/release"
     assert items[0].excerpt == "Acme signed a supply deal."
     assert items[0].published_at == datetime(2026, 9, 24, 20, 5, tzinfo=timezone.utc)
+
+
+def test_company_feed_symbol_and_formal_watchlist_names_match_releases():
+    feed = (
+        b"<rss><channel><item><title>AMD announces strategic partnership</title>"
+        b"<link>https://ir.amd.com/release</link></item></channel></rss>"
+    )
+    items = rss_items(FakeHttp([feed]), "https://ir.amd.com/rss", "ir_amd", ("AMD",))
+    assert items[0].symbols == ("AMD",)
+    entry = WatchlistEntry(
+        alpaca_asset_id="asset-fps",
+        symbol="FPS",
+        name="Forgent Power Solutions, Inc.",
+        exchange="NYSE",
+    )
+    assert company_match("Forgent Power Solutions Announces Public Offering", entry)
+    assert not company_match("Unrelated power company announces offering", entry)
 
 
 def test_alpaca_pages_until_exhaustion_and_keeps_original_creation_time(monkeypatch):
@@ -98,6 +119,92 @@ def test_geopolitical_discovery_is_limited_to_configured_exposures():
     assert len(http.calls) == 1
     assert items[0].symbols == ("OILX",)
     assert items[0].published_at is None
+
+
+def test_industry_discovery_requires_explicit_sector_exposure():
+    entries = [
+        WatchlistEntry(alpaca_asset_id="asset-chip", symbol="CHIP", name="Chip Maker", exchange="NASDAQ"),
+        WatchlistEntry(alpaca_asset_id="asset-soft", symbol="SOFT", name="Software Maker", exchange="NASDAQ"),
+    ]
+    http = FakeHttp([{"articles": [{"url": "https://example.com/capex", "title": "GPU supply expands"}]}])
+    now = datetime(2026, 9, 25, tzinfo=timezone.utc)
+    items = gdelt_exposure_items(http, entries, {"CHIP": ["ai_infrastructure"]}, now, now)
+    assert len(http.calls) == 1
+    assert "GPU supply" in http.calls[0][1]["params"]["query"]
+    assert items[0].symbols == ("CHIP",)
+
+
+def test_finnhub_company_news_keeps_publisher_link_and_related_watchlist_symbols(monkeypatch):
+    monkeypatch.setattr(settings, "finnhub_api_key", "test-key")
+    now = datetime(2026, 9, 25, tzinfo=timezone.utc)
+    http = FakeHttp(
+        [
+            [
+                {
+                    "id": 17,
+                    "url": "https://publisher.example/target?utm_source=feed",
+                    "headline": "Broker raises CHIP price target",
+                    "summary": "Target raised to $42.",
+                    "datetime": 1790251200,
+                    "related": "CHIP, SOFT",
+                }
+            ]
+        ]
+    )
+    items = finnhub_items(http, "CHIP", now, now)
+    assert http.calls[0][0] == "https://api.finnhub.io/api/v1/company-news"
+    assert http.calls[0][1]["headers"] == {"X-Finnhub-Token": "test-key"}
+    assert items[0].url == "https://publisher.example/target"
+    assert items[0].symbols == ("CHIP", "SOFT")
+    assert items[0].published_at is not None
+
+
+def test_form4_only_treats_reported_sales_as_insider_sales():
+    sale = """<ownershipDocument><reportingOwner><reportingOwnerId>
+        <rptOwnerName>Jane Doe</rptOwnerName></reportingOwnerId></reportingOwner>
+        <nonDerivativeTable><nonDerivativeTransaction>
+        <transactionDate><value>2026-09-24</value></transactionDate>
+        <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+        <transactionAmounts><transactionShares><value>10000</value></transactionShares>
+        <transactionPricePerShare><value>42.50</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+        </transactionAmounts></nonDerivativeTransaction></nonDerivativeTable></ownershipDocument>"""
+    assert "Jane Doe: 10000 shares at 42.50 per share" in form4_sale_details(sale)
+    assert form4_sale_details(sale.replace("<transactionCode>S", "<transactionCode>F")) == ""
+    assert form4_sale_details(sale.replace("<value>D</value>", "<value>A</value>")) == ""
+
+
+def test_sec_adds_sales_and_registration_without_claiming_completed_dilution(monkeypatch):
+    monkeypatch.setattr(settings, "sec_user_agent", "Trader Research contact@example.com")
+    entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
+    mapping = {
+        "fields": ["ticker", "exchange", "name", "cik"],
+        "data": [["ACME", "NASDAQ", "Acme Corp", 1234]],
+    }
+    recent = {
+        "filings": {
+            "recent": {
+                "form": ["4", "S-3"],
+                "acceptanceDateTime": ["2026-09-24T20:00:00Z", "2026-09-24T19:00:00Z"],
+                "accessionNumber": ["0001-01-000001", "0001-01-000002"],
+                "primaryDocument": ["xslF345X06/ownership.xml", "registration.htm"],
+            }
+        }
+    }
+    sale = """<ownershipDocument><nonDerivativeTransaction>
+        <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+        <transactionAmounts><transactionShares><value>10000</value></transactionShares>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+        </transactionAmounts></nonDerivativeTransaction></ownershipDocument>"""
+    http = FakeHttp([mapping, recent, sale, "<p>Registration statement for common shares.</p>"])
+    items = sec_items(http, [entry], datetime(2026, 9, 23, tzinfo=timezone.utc))
+    assert len(items) == 2
+    assert "insider sale" in items[0].title
+    assert "10000 shares" in items[0].excerpt
+    assert items[0].url.endswith("/xslF345X06/ownership.xml")
+    assert http.calls[2][0].endswith("/ownership.xml")
+    assert items[1].title == "Acme Corp filed Form S-3"
+    assert "Registration statement" in items[1].excerpt
 
 
 def test_publisher_metadata_keeps_excerpt_and_verified_time():

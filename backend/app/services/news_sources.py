@@ -113,12 +113,25 @@ def source_key(provider: str, url: str, external_id: str | None = None) -> str:
 
 def company_match(text: str, entry: WatchlistEntry) -> bool:
     """Require a name, or a ticker in an equity context; short common words are unsafe alone."""
-    lower = text.lower()
-    name = re.sub(
-        r"\b(inc|corp|corporation|company|class|common|stock|holdings|plc|ltd)\b", "", entry.name.lower()
-    )
-    name = re.sub(r"\s+", " ", name).strip()
-    if len(name) >= 4 and name in lower:
+    lower = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    name_words = re.findall(r"[a-z0-9]+", entry.name.lower())
+    suffixes = {
+        "inc",
+        "corp",
+        "corporation",
+        "company",
+        "class",
+        "common",
+        "stock",
+        "holdings",
+        "holding",
+        "plc",
+        "ltd",
+        "ordinary",
+        "shares",
+    }
+    name = " ".join(word for word in name_words if word not in suffixes)
+    if len(name) >= 4 and re.search(rf"\b{re.escape(name)}\b", lower):
         return True
     symbol = re.escape(entry.symbol)
     return bool(re.search(rf"(?:NASDAQ|NYSE|AMEX|ticker|shares of)\s*[:(]?\s*{symbol}\b", text, re.I))
@@ -273,6 +286,29 @@ EXPOSURE_QUERIES = {
     "airline_fuel": '"oil prices" OR "oil supply" OR "jet fuel"',
     "semiconductor_exports": '"semiconductor export restrictions" OR "chip sanctions" OR "chip tariffs"',
     "china_sales": '"China tariffs" OR "US China trade restrictions"',
+    "semiconductor_supply_chain": (
+        '"chip supply shortage" OR "wafer capacity" OR "advanced packaging capacity" '
+        'OR "semiconductor equipment orders"'
+    ),
+    "ai_infrastructure": (
+        '"AI infrastructure spending" OR "hyperscaler capital expenditure" '
+        'OR "GPU supply" OR "data center capital expenditure"'
+    ),
+    "enterprise_software": (
+        '"enterprise software spending" OR "cloud spending" OR "SaaS demand" OR "enterprise AI adoption"'
+    ),
+    "data_center_power": (
+        '"data center power demand" OR "AI data center power" OR "data center grid constraints" '
+        'OR "data center power distribution"'
+    ),
+    "optical_interconnect": (
+        '"optical transceiver demand" OR "co-packaged optics" OR "800G optics" OR "1.6T optics"'
+    ),
+    "ai_memory": '"HBM supply" OR "HBM demand" OR "DRAM prices" OR "AI memory demand"',
+    "data_center_storage": (
+        '"data center storage spending" OR "NAND prices" OR "enterprise SSD demand" '
+        'OR "hyperscale HDD demand"'
+    ),
 }
 
 
@@ -359,7 +395,43 @@ def alpaca_items(http: NewsHttp, symbols: list[str], since: datetime, until: dat
     return items
 
 
-def rss_items(http: NewsHttp, url: str, provider: str) -> list[SourceItem]:
+def finnhub_items(http: NewsHttp, symbol: str, since: datetime, until: datetime) -> list[SourceItem]:
+    """Supplement ticker news with attributed publisher links when a key is configured."""
+    if not settings.finnhub_api_key:
+        return []
+    response = http.get(
+        "https://api.finnhub.io/api/v1/company-news",
+        params={"symbol": symbol, "from": since.date().isoformat(), "to": until.date().isoformat()},
+        headers={"X-Finnhub-Token": settings.finnhub_api_key},
+    )
+    items = []
+    for raw in sorted(response.json(), key=lambda value: value.get("datetime") or 0, reverse=True)[:100]:
+        url = canonical_url(str(raw.get("url", "")))
+        title = str(raw.get("headline", "")).strip()
+        if not url or not title:
+            continue
+        timestamp = raw.get("datetime")
+        published = (
+            datetime.fromtimestamp(timestamp, timezone.utc)
+            if isinstance(timestamp, int) and timestamp > 0
+            else None
+        )
+        related = {part.strip().upper() for part in str(raw.get("related") or "").split(",")}
+        items.append(
+            SourceItem(
+                "finnhub",
+                source_key("finnhub", url, str(raw["id"]) if raw.get("id") is not None else None),
+                url,
+                title[:500],
+                plain_text(str(raw.get("summary") or "")),
+                published,
+                tuple(sorted({symbol.upper(), *related} - {""})),
+            )
+        )
+    return items
+
+
+def rss_items(http: NewsHttp, url: str, provider: str, symbols: tuple[str, ...] = ()) -> list[SourceItem]:
     root = ElementTree.fromstring(http.get(url).content)
     items: list[SourceItem] = []
     for node in root.findall(".//item") + root.findall("{http://www.w3.org/2005/Atom}entry"):
@@ -385,6 +457,7 @@ def rss_items(http: NewsHttp, url: str, provider: str) -> list[SourceItem]:
                 title,
                 plain_text(description),
                 parse_date(child("pubDate") or child("{http://www.w3.org/2005/Atom}published")),
+                symbols,
             )
         )
     return items
@@ -433,6 +506,44 @@ def spglobal_index_items(http: NewsHttp, entries: list[WatchlistEntry]) -> list[
     return items
 
 
+def form4_sale_details(document: str) -> str:
+    """Extract reported sales; awards, gifts, and tax withholding are not sales."""
+    try:
+        root = ElementTree.fromstring(document)
+    except ElementTree.ParseError:
+        return ""
+    for node in root.iter():
+        node.tag = node.tag.rsplit("}", 1)[-1]
+    owners = [
+        name.text.strip()
+        for name in root.findall(".//reportingOwner/reportingOwnerId/rptOwnerName")
+        if name.text and name.text.strip()
+    ]
+    sales = []
+    for transaction in root.findall(".//nonDerivativeTransaction"):
+        code = transaction.findtext("./transactionCoding/transactionCode")
+        disposition = transaction.findtext("./transactionAmounts/transactionAcquiredDisposedCode/value")
+        if code != "S" or disposition != "D":
+            continue
+        shares = transaction.findtext("./transactionAmounts/transactionShares/value")
+        price = transaction.findtext("./transactionAmounts/transactionPricePerShare/value")
+        day = transaction.findtext("./transactionDate/value")
+        parts = [f"{shares} shares" if shares else "shares"]
+        if price:
+            parts.append(f"at {price} per share")
+        if day:
+            parts.append(f"on {day}")
+        sales.append(" ".join(parts))
+    if not sales:
+        return ""
+    owner_label = ", ".join(owners[:3]) if owners else "a reporting owner"
+    details = "; ".join(sales[:5])
+    return (
+        f"SEC Form 4 reports sale transaction code S for {owner_label}: {details}. "
+        "The filing alone does not establish why the shares were sold or whether a trading plan applies."
+    )
+
+
 def sec_items(http: NewsHttp, entries: list[WatchlistEntry], since: datetime) -> list[SourceItem]:
     if not settings.sec_user_agent:
         return []
@@ -457,7 +568,20 @@ def sec_items(http: NewsHttp, entries: list[WatchlistEntry], since: datetime) ->
         ]["recent"]
         accepted = 0
         for index, form in enumerate(recent["form"]):
-            if form not in {"8-K", "6-K", "10-Q", "10-K"}:
+            if form not in {
+                "8-K",
+                "6-K",
+                "10-Q",
+                "10-K",
+                "4",
+                "S-3",
+                "S-3ASR",
+                "F-3",
+                "F-3ASR",
+                "424B5",
+                "424B4",
+                "S-1",
+            }:
                 continue
             published = parse_date(recent["acceptanceDateTime"][index])
             if published and published < since:
@@ -470,10 +594,23 @@ def sec_items(http: NewsHttp, entries: list[WatchlistEntry], since: datetime) ->
                 f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{document}"
             )
             title = f"{entry.name} filed Form {form}"
+            # The submissions API may name an XSL-rendered Form 4 path. Read its raw XML sibling.
+            document_url = (
+                url.rsplit("/", 2)[0] + "/" + document.rsplit("/", 1)[-1]
+                if form == "4" and document.startswith("xslF345") and "/" in document
+                else url
+            )
             try:
-                body = plain_text(http.get(url, headers=headers).text)
+                document = http.get(document_url, headers=headers).text
             except (httpx.HTTPError, ValueError):
-                body = ""
+                document = ""
+            if form == "4":
+                body = form4_sale_details(document)
+                if not body:
+                    continue
+                title = f"{entry.name} filed Form 4 reporting an insider sale"
+            else:
+                body = plain_text(document)
             items.append(SourceItem("sec", accession, url, title, body, published, (entry.symbol,)))
             accepted += 1
     return items

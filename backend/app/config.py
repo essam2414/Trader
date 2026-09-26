@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     dashboard_api_key: str
     alpaca_api_key: str | None = None
     alpaca_api_secret: str | None = None
+    finnhub_api_key: str | None = None
+    openai_api_key: str | None = None
+    openai_news_enabled: bool = False
+    openai_news_model: str = "gpt-5.4-mini"
+    openai_news_daily_token_budget: int = 2_400_000
     alpaca_data_feed: str = "iex"
     alpaca_watchlist_limit: int = 20
     snapshot_interval_minutes: int = 15
@@ -39,8 +44,6 @@ class Settings(BaseSettings):
     news_rss_feeds_json: str = "{}"
     sec_user_agent: str | None = None
     alpha_vantage_api_key: str | None = None
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen3:4b"
 
 
 settings = Settings()

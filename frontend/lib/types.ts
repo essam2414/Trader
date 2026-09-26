@@ -134,6 +134,11 @@ export interface WatchlistEntry {
   quote: WatchlistQuote;
 }
 
+export interface WatchlistPositionPrice {
+  purchasePrice: number | null;
+  purchasePriceCurrency: string | null;
+}
+
 export type ChartRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "MAX";
 
 export interface StockChartBar {

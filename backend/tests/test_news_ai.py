@@ -1,27 +1,42 @@
-"""Reject unsupported local-model outputs before publishing a card."""
+"""OpenAI news cards require source support and stay within the local budget."""
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 
-from app.models import WatchlistEntry
-from app.services.news_ai import Evidence, LocalNewsAnalyser
+from app.config import settings
+from app.models import NewsAiDailyUsage, WatchlistEntry
+from app.services.news_ai import Evidence, OpenAINewsAnalyser
+from app.services.news_ai_budget import DailyNewsTokenBudget
 from app.services.news_sources import SourceItem
 
 
-def test_model_rejects_unknown_ids_and_fabricated_numbers(monkeypatch):
+class FakeBudget:
+    def __init__(self):
+        self.reserved = []
+        self.settled = []
+
+    def reserve(self, estimate):
+        self.reserved.append(estimate)
+        return date(2026, 9, 25)
+
+    def settle(self, day, estimate, actual):
+        self.settled.append((day, estimate, actual))
+
+
+def _inputs():
     entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme", exchange="NASDAQ")
     evidence = [
         Evidence(
             4,
             SourceItem(
-                "company",
+                "ir_acme",
                 "r1",
                 "https://example.com/r1",
                 "Acme wins contract",
                 "Acme announced a supply contract.",
-                datetime.now(timezone.utc),
+                datetime(2026, 9, 25, tzinfo=timezone.utc),
                 ("ACME",),
             ),
         )
@@ -36,18 +51,44 @@ def test_model_rejects_unknown_ids_and_fabricated_numbers(monkeypatch):
         "detailSummary": "Acme announced a supply contract.",
         "keyFacts": [],
         "unknowns": [],
-        "relevanceReason": "Acme is watched.",
+        "relevanceReason": "Acme announced a supply contract.",
         "supportingSourceIds": [4],
     }
+    return entry, evidence, result
 
-    def fake_post(_url, **_kwargs):
-        response = httpx.Response(200, json={"message": {"content": json.dumps(result)}})
-        response.request = httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
-        return response
+
+def test_responses_api_uses_strict_card_schema_and_server_side_key(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
+    budget = FakeBudget()
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}
+                ],
+                "usage": {"total_tokens": 123},
+            },
+            request=httpx.Request("POST", url),
+        )
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    analyser = LocalNewsAnalyser()
+    analyser = OpenAINewsAnalyser(budget=budget)
     assert analyser.analyse([entry], evidence) is not None
+    url, options = calls[0]
+    assert url == "https://api.openai.com/v1/responses"
+    assert options["headers"] == {"Authorization": "Bearer test-key"}
+    assert options["json"]["model"] == "gpt-5.4-mini"
+    assert options["json"]["store"] is False
+    assert options["json"]["reasoning"] == {"effort": "none"}
+    assert options["json"]["text"]["format"]["strict"] is True
+    assert budget.settled[0][2] == 123
 
     result["supportingSourceIds"] = [999]
     assert analyser.analyse([entry], evidence) is None
@@ -56,47 +97,103 @@ def test_model_rejects_unknown_ids_and_fabricated_numbers(monkeypatch):
     assert analyser.analyse([entry], evidence) is None
 
 
-def test_old_ollama_schema_error_falls_back_to_json_and_still_validates(monkeypatch):
-    entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme", exchange="NASDAQ")
+def test_api_error_counts_full_reservation_and_stops_more_calls(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, _ = _inputs()
+    budget = FakeBudget()
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(429, json={"error": "rate limited"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    analyser = OpenAINewsAnalyser(budget=budget)
+    assert analyser.analyse([entry], evidence) is None
+    assert analyser.analyse([entry], evidence) is None
+    assert len(calls) == 1
+    assert budget.settled[0][2] is None
+
+
+def test_fallback_model_omits_unsupported_reasoning_option(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
+    payloads = []
+
+    def fake_post(url, **kwargs):
+        payloads.append(kwargs["json"])
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}
+                ],
+                "usage": {"total_tokens": 100},
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    assert OpenAINewsAnalyser(model="gpt-4.1-mini", budget=FakeBudget()).analyse([entry], evidence)
+    assert "reasoning" not in payloads[0]
+
+
+def test_daily_budget_reserves_before_call_and_persists_usage(db_session):
+    def factory():
+        return db_session.__class__(bind=db_session.bind)
+
+    budget = DailyNewsTokenBudget(1_000, session_factory=factory)
+    day = date(2026, 9, 25)
+    assert budget.reserve(700, day) == day
+    assert budget.reserve(400, day) is None
+    budget.settle(day, 700, 250)
+    assert budget.reserve(700, day) == day
+    usage = db_session.get(NewsAiDailyUsage, day)
+    assert (usage.used_tokens, usage.reserved_tokens, usage.requests) == (250, 700, 2)
+    assert DailyNewsTokenBudget(9_000_000, session_factory=factory).limit == 2_500_000
+
+
+def test_model_receives_every_source_and_full_collected_excerpt(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
     evidence = [
         Evidence(
-            4,
+            number,
             SourceItem(
-                "company",
-                "r1",
-                "https://example.com/r1",
+                "publisher",
+                str(number),
+                f"https://example.com/{number}",
                 "Acme wins contract",
-                "Acme announced a supply contract.",
-                datetime.now(timezone.utc),
+                "Acme announced a supply contract. " + "x" * 1700,
+                datetime(2026, 9, 25, tzinfo=timezone.utc),
                 ("ACME",),
             ),
         )
+        for number in range(1, 11)
     ]
-    result = {
-        "relevant": True,
-        "affectedAssetIds": ["asset-acme"],
-        "category": "deal",
-        "direction": "upside",
-        "headline": "Acme wins contract",
-        "shortSummary": "Acme announced a supply contract.",
-        "detailSummary": "Acme announced a supply contract.",
-        "keyFacts": [],
-        "unknowns": [],
-        "relevanceReason": "Acme is watched.",
-        "supportingSourceIds": [4],
-    }
-    calls = []
+    result["supportingSourceIds"] = [10]
+    payloads = []
 
-    def fake_post(_url, **kwargs):
-        calls.append(kwargs["json"])
-        request = httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
-        if len(calls) == 1:
-            return httpx.Response(
-                500, json={"error": "failed to load model vocabulary required for format"}, request=request
-            )
-        return httpx.Response(200, json={"message": {"content": json.dumps(result)}}, request=request)
+    def fake_post(url, **kwargs):
+        payloads.append(kwargs["json"])
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}
+                ],
+                "usage": {"total_tokens": 500},
+            },
+            request=httpx.Request("POST", url),
+        )
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    assert LocalNewsAnalyser().analyse([entry], evidence) is not None
-    assert len(calls) == 2
-    assert calls[1]["format"] == "json"
+    assert OpenAINewsAnalyser(budget=FakeBudget()).analyse([entry], evidence)
+    sources = json.loads(payloads[0]["input"])["sources"]
+    assert {source["id"] for source in sources} == set(range(1, 11))
+    assert all(len(source["excerpt"]) > 1600 for source in sources)

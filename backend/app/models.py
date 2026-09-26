@@ -273,3 +273,14 @@ class NewsSyncState(Base):
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class NewsAiDailyUsage(Base):
+    """Conservative daily reservations and measured OpenAI news token use."""
+
+    __tablename__ = "news_ai_daily_usage"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    used_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

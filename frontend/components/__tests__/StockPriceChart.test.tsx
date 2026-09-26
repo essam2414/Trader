@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatAxisPrice, mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
+import { calculateRangeReturn, formatAxisPrice, mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
 import type { StockChart, WatchlistEntry } from "../../lib/types";
 
 const chart: StockChart = {
@@ -109,6 +109,24 @@ describe("StockPriceChart", () => {
     expect(screen.getByTestId("purchase-price-line")).toHaveClass("border-dashed");
   });
 
+  it("renders a compact chart with a controlled range and no separate stream or range controls", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const fetchMock = vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
+      input.endsWith("/position") ? { purchasePrice: null } : { ...chart, range: "1M" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StockPriceChart assetId="asset-now" range="1M" compact watchlistEntry={watchlistEntry()} live={{ bars: [], latestPrice: 140.25 }} purchasePriceOverride={null} />);
+
+    expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Selected range return")).toHaveTextContent("+3.28%"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/watchlist/asset-now/chart?range=1M", expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist", expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist/asset-now/position", expect.anything());
+    expect(screen.queryByRole("button", { name: "1M" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Stock analysis" })).not.toBeInTheDocument();
+    expect(FakeEventSource.sources).toHaveLength(0);
+  });
+
   it("keeps the purchase level across ranges and live price updates", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () =>
@@ -151,6 +169,14 @@ describe("chart price labels", () => {
     expect(formatAxisPrice(123.456)).toBe("123");
     expect(formatAxisPrice(1234.56)).toBe("1,230");
     expect(formatAxisPrice(0.012345)).toBe("0.0123");
+  });
+});
+
+describe("selected range return", () => {
+  it("compares the first visible bar open with the latest plotted price", () => {
+    expect(calculateRangeReturn([bar("2026-09-23T14:00:00Z", 100), bar("2026-09-23T14:15:00Z", 101)], 109.78)).toBeCloseTo(10);
+    expect(calculateRangeReturn([], 100)).toBeNull();
+    expect(calculateRangeReturn([{ ...bar("2026-09-23T14:00:00Z", 100), open: 0 }], 110)).toBeNull();
   });
 });
 
