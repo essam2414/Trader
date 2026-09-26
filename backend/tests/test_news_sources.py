@@ -3,11 +3,14 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import httpx
+
 from app.config import settings
 from app.models import WatchlistEntry
 from app.services.news_sources import (
     ArticleMetadata,
     alpaca_items,
+    bloom_energy_items,
     company_match,
     finnhub_items,
     form4_sale_details,
@@ -63,6 +66,57 @@ def test_company_feed_symbol_and_formal_watchlist_names_match_releases():
     )
     assert company_match("Forgent Power Solutions Announces Public Offering", entry)
     assert not company_match("Unrelated power company announces offering", entry)
+
+
+def test_formal_vertiv_name_matches_its_index_announcement():
+    entry = WatchlistEntry(
+        alpaca_asset_id="asset-vrt",
+        symbol="VRT",
+        name="Vertiv Holdings Co Class A Common Stock",
+        exchange="NYSE",
+    )
+    assert company_match("S&P 500 Addition Vertiv Holdings VRT Industrials", entry)
+
+
+def test_bloom_energy_uses_official_newsroom_when_its_rss_feed_is_forbidden():
+    feed_url = "https://investor.bloomenergy.com/rss/pressrelease.aspx"
+    newsroom_url = "https://www.bloomenergy.com/newsroom/"
+    html = """
+    <article class="dp-dfg-item news_type-press-release">
+      <h5><a href="https://www.bloomenergy.com/news/bloom-expands-contract/">
+        Bloom Energy expands power contract
+      </a></h5><div class="blogdate">September 25, 2026</div>
+    </article>
+    <article class="dp-dfg-item news_type-in-the-news">
+      <h5><a href="https://www.bloomenergy.com/news/other/">Unrelated article</a></h5>
+    </article>
+    <article class="dp-dfg-item news_type-press-release">
+      <h5><a href="https://www.bloomenergy.com/news/old-contract/">Old Bloom contract</a></h5>
+      <div class="blogdate">September 1, 2026</div>
+    </article>
+    """
+
+    class BlockedFeedHttp:
+        calls = []
+
+        def get(self, url):
+            self.calls.append(url)
+            if url == feed_url:
+                request = httpx.Request("GET", url)
+                raise httpx.HTTPStatusError(
+                    "403 Forbidden", request=request, response=httpx.Response(403, request=request)
+                )
+            return SimpleNamespace(text=html)
+
+    http = BlockedFeedHttp()
+    items = bloom_energy_items(http, feed_url, ("BE",), datetime(2026, 9, 26, tzinfo=timezone.utc))
+    assert http.calls == [feed_url, newsroom_url]
+    assert len(items) == 1
+    assert items[0].provider == "ir_be"
+    assert items[0].url == "https://www.bloomenergy.com/news/bloom-expands-contract"
+    assert items[0].title == "Bloom Energy expands power contract"
+    assert items[0].symbols == ("BE",)
+    assert items[0].published_at is None
 
 
 def test_alpaca_pages_until_exhaustion_and_keeps_original_creation_time(monkeypatch):
@@ -226,7 +280,7 @@ def test_official_sp_index_archive_extracts_watched_company_and_effective_date()
     entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
     archive = (
         '<ul class="wd_item_list"><li class="wd_item"><div class="wd_title">'
-        '<a href="https://press.spglobal.com/release-1">Acme Set to Join S&amp;P 500</a>'
+        '<a href="https://press.spglobal.com/2026-09-24-acme-release">Acme Set to Join S&amp;P 500</a>'
         "</div></li></ul>"
     )
     page = (
@@ -234,8 +288,45 @@ def test_official_sp_index_archive_extracts_watched_company_and_effective_date()
         '<div class="wd_body wd_news_body">Acme Corp will join S&amp;P 500 '
         "effective prior to open of trading on October 5, 2026.</div>"
     )
-    items = spglobal_index_items(FakeHttp([archive, page]), [entry])
+    items = spglobal_index_items(
+        FakeHttp([archive, page]), [entry], datetime(2026, 9, 26, tzinfo=timezone.utc)
+    )
     assert len(items) == 1
     assert items[0].provider == "spdji"
     assert items[0].symbols == ("ACME",)
     assert "October 5, 2026" in items[0].excerpt
+
+
+def test_sp_index_archive_skips_old_announcements_and_matches_all_watched_additions():
+    entries = [
+        WatchlistEntry(
+            alpaca_asset_id="asset-vrt",
+            symbol="VRT",
+            name="Vertiv Holdings Co Class A Common Stock",
+            exchange="NYSE",
+        ),
+        WatchlistEntry(
+            alpaca_asset_id="asset-mu",
+            symbol="MU",
+            name="Micron Technology, Inc. Common Stock",
+            exchange="NASDAQ",
+        ),
+        WatchlistEntry(alpaca_asset_id="asset-cohr", symbol="COHR", name="Coherent Corp.", exchange="NYSE"),
+    ]
+    archive = (
+        '<ul class="wd_item_list">'
+        '<li class="wd_item"><div class="wd_title"><a '
+        'href="https://press.spglobal.com/2026-03-06-old-index-changes">Old index changes</a></div></li>'
+        '<li class="wd_item"><div class="wd_title"><a '
+        'href="https://press.spglobal.com/2026-09-25-new-index-changes">'
+        "Companies Set to Join the S&amp;P 500</a></div></li></ul>"
+    )
+    page = (
+        '<div class="wd_body wd_news_body">S&amp;P 100 Addition Micron Technology MU. '
+        "S&amp;P 500 Addition Vertiv Holdings VRT. S&amp;P 500 Addition Coherent COHR.</div>"
+    )
+    http = FakeHttp([archive, page])
+    items = spglobal_index_items(http, entries, datetime(2026, 9, 26, tzinfo=timezone.utc))
+    assert len(items) == 1
+    assert set(items[0].symbols) == {"VRT", "MU", "COHR"}
+    assert len(http.calls) == 2

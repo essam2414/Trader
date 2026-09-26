@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 
 from app.alpaca_market_data import AlpacaMarketDataClient
 from app.config import settings
-from app.models import NewsSourceItem, NewsStory, NewsStorySource, NewsStoryStock, WatchlistEntry
+from app.models import (
+    NewsSourceItem,
+    NewsStory,
+    NewsStorySource,
+    NewsStoryStock,
+    NewsSyncState,
+    WatchlistEntry,
+)
 
 
 def test_news_client_filters_duplicate_ids_and_orders_last_updated_first(monkeypatch):
@@ -92,6 +99,19 @@ def test_news_routes_show_one_sourced_story_only_for_current_watchlist(client, d
     assert detail.json()["sources"][0]["url"] == "https://example.com/release"
     assert detail.json()["detailSummary"] == "The terms were announced in a release."
 
+    story = db_session.get(NewsStory, 42)
+    story.direction = "mixed"
+    db_session.commit()
+    assert client.get("/api/news", headers=headers).json()[0]["direction"] == "unclear"
+    assert client.get("/api/news/42", headers=headers).json()["direction"] == "unclear"
+
+    story.status = "expired"
+    db_session.commit()
+    assert client.get("/api/news", headers=headers).json() == []
+    assert client.get("/api/news/42", headers=headers).status_code == 404
+
+    story.status = "ready"
+    db_session.commit()
     db_session.query(WatchlistEntry).delete()
     db_session.commit()
     assert client.get("/api/news", headers=headers).json() == []
@@ -107,3 +127,46 @@ def article(article_id, headline, created_at, updated_at, symbols):
         "updated_at": updated_at,
         "symbols": symbols,
     }
+
+
+def test_news_and_events_status_use_separate_collection_times(client, db_session):
+    db_session.add_all(
+        [
+            NewsSyncState(source_key="sec", last_success_at=datetime(2026, 9, 25, 8, tzinfo=timezone.utc)),
+            NewsSyncState(
+                source_key="events:fed",
+                last_success_at=datetime(2026, 9, 24, 7, tzinfo=timezone.utc),
+                last_error="HTTP 429 for https://example.com/calendar?token=private-value",
+            ),
+        ]
+    )
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+
+    news = client.get("/api/news/status", headers=headers)
+    events = client.get("/api/events/status", headers=headers)
+
+    assert news.json()["lastSuccessfulRunAt"] == "2026-09-25T08:00:00Z"
+    assert news.json()["failedSources"] == []
+    assert news.json()["sourceErrors"] == []
+    assert events.json()["lastSuccessfulRunAt"] == "2026-09-24T07:00:00Z"
+    assert events.json()["failedSources"] == ["events:fed"]
+    assert events.json()["sourceErrors"] == [{"source": "events:fed", "message": "HTTP 429 for [source URL]"}]
+    assert "private-value" not in events.text
+
+
+def test_manual_news_refresh_only_runs_news_job(client, monkeypatch):
+    from app.routers import news as news_router
+
+    monkeypatch.setattr(settings, "news_enabled", True)
+    calls = []
+    monkeypatch.setattr(news_router, "run_news_job", lambda: calls.append("news") or {"sec": 2})
+    monkeypatch.setattr(news_router, "run_events_job", lambda: calls.append("events") or {})
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+
+    result = client.post("/api/news/refresh", headers=headers)
+
+    assert result.status_code == 200
+    assert result.json()["refreshedSources"] == 1
+    assert result.json()["refreshedStories"] == 2
+    assert calls == ["news"]

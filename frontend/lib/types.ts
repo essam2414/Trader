@@ -182,7 +182,7 @@ export interface CatalystCard {
   shortSummary: string;
   watchlistSymbols: string[];
   category: string;
-  direction: "upside" | "downside" | "mixed" | "unclear";
+  direction: "upside" | "downside" | "unclear";
   status: "ready" | "pending";
   releasedAt: string | null;
   firstSeenAt: string;
@@ -205,7 +205,13 @@ export interface CatalystDetail extends CatalystCard {
 export interface NewsStatus {
   lastSuccessfulRunAt: string | null;
   failedSources: string[];
+  sourceErrors: SourceError[];
   pendingSummaries: number;
+}
+
+export interface SourceError {
+  source: string;
+  message: string;
 }
 
 export interface MarketEvent {
@@ -226,5 +232,17 @@ export interface MarketEvent {
 export interface EventRefreshResult {
   refreshedSources: number;
   refreshedEvents: number;
+  failedSources: string[];
+}
+
+export interface EventStatus {
+  lastSuccessfulRunAt: string | null;
+  failedSources: string[];
+  sourceErrors: SourceError[];
+}
+
+export interface NewsRefreshResult {
+  refreshedSources: number;
+  refreshedStories: number;
   failedSources: string[];
 }

@@ -196,7 +196,7 @@ class CatalystCardOut(BaseModel):
     shortSummary: str
     watchlistSymbols: list[str]
     category: str
-    direction: str
+    direction: Literal["upside", "downside", "unclear"]
     status: str
     releasedAt: datetime | None
     firstSeenAt: datetime
@@ -218,9 +218,15 @@ class CatalystDetailOut(CatalystCardOut):
     sources: list[CatalystSourceOut]
 
 
+class SourceErrorOut(BaseModel):
+    source: str
+    message: str
+
+
 class NewsStatusOut(BaseModel):
     lastSuccessfulRunAt: datetime | None
     failedSources: list[str]
+    sourceErrors: list[SourceErrorOut]
     pendingSummaries: int
 
 
@@ -242,4 +248,16 @@ class MarketEventOut(BaseModel):
 class EventRefreshOut(BaseModel):
     refreshedSources: int
     refreshedEvents: int
+    failedSources: list[str]
+
+
+class EventStatusOut(BaseModel):
+    lastSuccessfulRunAt: datetime | None
+    failedSources: list[str]
+    sourceErrors: list[SourceErrorOut]
+
+
+class NewsRefreshOut(BaseModel):
+    refreshedSources: int
+    refreshedStories: int
     failedSources: list[str]

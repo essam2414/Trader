@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { calculateRangeReturn, formatAxisPrice, mergeDisplayBars, StockPriceChart } from "../StockPriceChart";
 import type { StockChart, WatchlistEntry } from "../../lib/types";
@@ -41,15 +41,17 @@ class FakeEventSource {
 describe("StockPriceChart", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); FakeEventSource.sources = []; });
 
-  it("renders the compact header, current price, positive movement, and every bottom range", async () => {
+  it("keeps the stock identity, price, and smaller daily change in one overview row", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", vi.fn((input: string) => Promise.resolve({ ok: true, json: async () => input === "/api/watchlist" ? [watchlistEntry()] : chart })));
     render(<StockPriceChart assetId="asset-now" />);
 
-    expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
+    const overview = await screen.findByRole("group", { name: "Stock overview" });
+    expect(overview).toHaveClass("flex-nowrap");
+    expect(within(overview).getByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
     expect(screen.getByText("NOW · NYSE")).toBeInTheDocument();
-    expect(screen.getByTestId("stock-current-price")).toHaveTextContent("$140.25");
-    expect(screen.getByText("↗ 3.25 (2.37%) today")).toHaveClass("text-[#32e64d]");
+    expect(within(overview).getByTestId("stock-current-price")).toHaveTextContent("$140.25");
+    expect(within(overview).getByText("↗ 3.25 (2.37%) today")).toHaveClass("text-sm", "text-[#32e64d]");
     for (const range of ["1D", "1W", "1M", "3M", "1Y", "MAX"]) expect(screen.getByRole("button", { name: range })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/Raw SIP|SIP history|IEX tail|partial-market|15 min delayed|SIP close/i)).not.toBeInTheDocument();
@@ -105,8 +107,10 @@ describe("StockPriceChart", () => {
     )));
     render(<StockPriceChart assetId="asset-now" />);
 
-    expect(await screen.findByTestId("purchase-price-line")).toHaveAttribute("aria-label", "Average purchase price $62.75");
+    const line = await screen.findByTestId("purchase-price-line");
+    expect(line).toHaveAttribute("aria-label", "Average purchase price $62.75");
     expect(screen.getByTestId("purchase-price-line")).toHaveClass("border-dashed");
+    expect(line.parentElement).toHaveStyle({ right: "72px" });
   });
 
   it("renders a compact chart with a controlled range and no separate stream or range controls", async () => {
@@ -115,10 +119,13 @@ describe("StockPriceChart", () => {
       input.endsWith("/position") ? { purchasePrice: null } : { ...chart, range: "1M" },
     }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<StockPriceChart assetId="asset-now" range="1M" compact watchlistEntry={watchlistEntry()} live={{ bars: [], latestPrice: 140.25 }} purchasePriceOverride={null} />);
+    render(<StockPriceChart assetId="asset-now" range="1M" compact watchlistEntry={watchlistEntry()} live={{ bars: [], latestPrice: 140.25 }} purchasePriceOverride={138} />);
 
     expect(await screen.findByRole("heading", { name: "ServiceNow" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Selected range return")).toHaveTextContent("+3.28%"));
+    expect(screen.getByLabelText("Selected range return").parentElement).toHaveClass("font-sans", "[font-variant-numeric:tabular-nums]");
+    expect(screen.getByTestId("stock-chart-plot")).toHaveClass("-ml-2", "-mr-3", "w-[calc(100%+1.25rem)]");
+    expect(screen.getByTestId("purchase-price-line").parentElement).toHaveStyle({ right: "48px" });
     expect(fetchMock).toHaveBeenCalledWith("/api/watchlist/asset-now/chart?range=1M", expect.anything());
     expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist", expect.anything());
     expect(fetchMock).not.toHaveBeenCalledWith("/api/watchlist/asset-now/position", expect.anything());

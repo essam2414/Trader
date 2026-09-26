@@ -18,6 +18,7 @@ from .news_sources import (
     NewsHttp,
     SourceItem,
     alpaca_items,
+    bloom_energy_items,
     canonical_url,
     company_match,
     configured_feeds,
@@ -96,9 +97,13 @@ def _utc(value: datetime) -> datetime:
 
 def _direction(title: str) -> str:
     lower = title.lower()
-    if any(word in lower for word in NEGATIVE):
+    negative = any(word in lower for word in NEGATIVE)
+    positive = any(word in lower for word in POSITIVE)
+    if negative and positive:
+        return "unclear"
+    if negative:
         return "downside"
-    if any(word in lower for word in POSITIVE):
+    if positive:
         return "upside"
     return "unclear"
 
@@ -328,9 +333,11 @@ def retry_pending(
         ):
             continue
         _analyse_story(db, story, entries, analyser, now)
+        # The next token reservation writes through a separate session. Release this story's
+        # transaction first so SQLite does not block every remaining reservation in the batch.
+        db.commit()
         budget[0] -= 1
         retried += 1
-    db.commit()
     return retried
 
 
@@ -378,8 +385,10 @@ def run_news_sync(
         for provider, url in configured_feeds().items():
             ir_symbol = provider.removeprefix("ir_").upper() if provider.startswith("ir_") else ""
             symbols = (ir_symbol,) if ir_symbol in watched_symbols else ()
-            jobs[f"rss:{provider}"] = lambda url=url, provider=provider, symbols=symbols: rss_items(
-                http, url, provider, symbols
+            jobs[f"rss:{provider}"] = lambda url=url, provider=provider, symbols=symbols: (
+                bloom_energy_items(http, url, symbols, now)
+                if provider == "ir_be"
+                else rss_items(http, url, provider, symbols)
             )
         if settings.finnhub_api_key:
             for entry in entries:
@@ -389,7 +398,7 @@ def run_news_sync(
         jobs.update(
             {
                 "sec": lambda: sec_items(http, entries, cutoff),
-                "spdji": lambda: spglobal_index_items(http, entries),
+                "spdji": lambda: spglobal_index_items(http, entries, now),
                 "alpaca": lambda: alpaca_items(http, [entry.symbol for entry in entries], cutoff, now),
                 "gdelt": lambda: gdelt_items(http, entries, cutoff, now),
                 "gdelt:exposure": lambda: gdelt_exposure_items(http, entries, _exposures(), cutoff, now),

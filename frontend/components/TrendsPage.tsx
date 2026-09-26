@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { StockPriceChart, type ChartLiveState } from "./StockPriceChart";
+import { conciseStockName } from "./WatchlistItem";
 import type { ChartRange, StockChartBar, WatchlistEntry, WatchlistPositionPrice } from "../lib/types";
 
-const RANGES: ChartRange[] = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
+const RANGES: ChartRange[] = ["1W", "1M", "3M", "1Y", "MAX"];
+const DEFAULT_RANGE: ChartRange = "1W";
 const STORAGE_KEY = "trader.trends.v1";
 
 type SavedTrends = { assetIds: string[]; range: ChartRange };
@@ -13,17 +15,17 @@ type LiveSnapshot = { symbol: string; bars?: StockChartBar[]; latestTrade?: { pr
 type LiveBar = StockChartBar & { symbol: string };
 
 export function readSavedTrends(value: string | null): SavedTrends {
-  if (!value) return { assetIds: [], range: "1D" };
+  if (!value) return { assetIds: [], range: DEFAULT_RANGE };
   try {
     const parsed: unknown = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object") return { assetIds: [], range: "1D" };
+    if (!parsed || typeof parsed !== "object") return { assetIds: [], range: DEFAULT_RANGE };
     const candidate = parsed as Partial<SavedTrends>;
     const assetIds = Array.isArray(candidate.assetIds)
       ? [...new Set(candidate.assetIds.filter((id): id is string => typeof id === "string" && id.length > 0))]
       : [];
-    return { assetIds, range: RANGES.includes(candidate.range as ChartRange) ? candidate.range! : "1D" };
+    return { assetIds, range: RANGES.includes(candidate.range as ChartRange) ? candidate.range! : DEFAULT_RANGE };
   } catch {
-    return { assetIds: [], range: "1D" };
+    return { assetIds: [], range: DEFAULT_RANGE };
   }
 }
 
@@ -45,7 +47,7 @@ function upsertBar(bars: StockChartBar[], next: StockChartBar): StockChartBar[] 
 export function TrendsPage() {
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [range, setRange] = useState<ChartRange>("1D");
+  const [range, setRange] = useState<ChartRange>(DEFAULT_RANGE);
   const [hydrated, setHydrated] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -228,7 +230,7 @@ export function TrendsPage() {
   }
 
   return (
-    <main className="min-h-screen w-full">
+    <main className="min-h-screen w-full font-sans">
       <div className="mb-7 border-b border-neutral-800">
         <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center justify-between gap-4 px-6 pb-5 pt-8 xl:px-8">
         <nav aria-label="Trends chart range" className="flex flex-wrap items-center gap-1 rounded-xl border border-neutral-800 bg-neutral-900/50 p-1">
@@ -241,7 +243,7 @@ export function TrendsPage() {
               <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Watchlist stocks</p>
               {entries.length === 0 ? <p className="px-2 py-3 text-sm text-neutral-400">Your watchlist is empty.</p> : entries.map((entry) => <label key={entry.assetId} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-neutral-800">
                 <input type="checkbox" checked={selectedIds.includes(entry.assetId)} onChange={() => toggleSelected(entry.assetId)} className="accent-[#00AEEF]" />
-                <span className="font-semibold text-neutral-100">{entry.symbol}</span><span className="truncate text-neutral-400">{entry.name}</span>
+                <span className="font-semibold text-neutral-100">{entry.symbol}</span><span className="truncate text-neutral-400">{conciseStockName(entry.name)}</span>
               </label>)}
             </div>}
           </div>

@@ -40,3 +40,26 @@ def test_news_revision_creates_expected_tables_on_existing_schema():
         assert "candidate_symbols" in {
             column["name"] for column in inspector.get_columns("news_source_items")
         }
+
+
+def test_direction_revision_converts_existing_mixed_stories_to_unclear():
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    path = Path(__file__).parents[1] / "alembic" / "versions" / "20260926_news_direction.py"
+    spec = importlib.util.spec_from_file_location("news_direction_revision", path)
+    assert spec is not None and spec.loader is not None
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO news_stories (id, headline, short_summary, detail_summary, "
+                "relevance_reason, key_facts, unknowns, category, direction, status, "
+                "first_seen_at, updated_at) VALUES (1, 'Test', '', '', '', '[]', '[]', "
+                "'other', 'mixed', 'ready', '2026-09-26', '2026-09-26')"
+            )
+        )
+        revision.op = Operations(MigrationContext.configure(connection))
+        revision.upgrade()
+        assert connection.scalar(sa.text("SELECT direction FROM news_stories WHERE id = 1")) == "unclear"

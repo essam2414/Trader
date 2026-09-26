@@ -1,10 +1,18 @@
 """Grouping, provenance, and fallback behavior for catalyst stories."""
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from app.models import NewsSourceItem, NewsStory, NewsStorySource, WatchlistEntry
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import QueuePool
+
+from app.db import Base
+from app.models import NewsAiDailyUsage, NewsSourceItem, NewsStory, NewsStorySource, WatchlistEntry
 from app.services import news_digest
 from app.services.news_ai import ModelAnalysis
+from app.services.news_ai_budget import DailyNewsTokenBudget
 from app.services.news_digest import ingest_items, retry_pending
 from app.services.news_sources import SourceItem, canonical_url
 
@@ -121,6 +129,27 @@ def test_model_outage_preserves_direct_source_as_pending(db_session):
     assert story.status == "ready"
 
 
+def test_pending_story_with_competing_headline_signals_is_unclear(db_session):
+    entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
+    db_session.add(entry)
+    db_session.commit()
+    now = datetime(2026, 9, 24, 20, tzinfo=timezone.utc)
+    item = SourceItem(
+        "company",
+        "guidance",
+        "https://example.com/guidance",
+        "Acme raises guidance but cuts guidance",
+        "Acme issued updated guidance.",
+        now,
+        ("ACME",),
+    )
+
+    assert ingest_items(db_session, [item], [entry], FailedAnalyser(), now) == 1
+    story = db_session.query(NewsStory).one()
+    assert story.status == "pending"
+    assert story.direction == "unclear"
+
+
 def test_dilution_and_insider_sale_headlines_reach_analysis(db_session):
     entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
     db_session.add(entry)
@@ -225,3 +254,74 @@ def test_sync_analyzes_more_than_twenty_pending_stories(db_session, monkeypatch)
     result = news_digest.run_news_sync(db_session, FakeAnalyser(), now, http=object())
     assert result["pending_retried"] == 21
     assert db_session.query(NewsStory).filter_by(status="ready").count() == 21
+
+
+def test_retry_pending_releases_sqlite_write_lock_before_next_token_reservation():
+    name = f"news_retry_{uuid4().hex}"
+    engine = create_engine(
+        f"sqlite:///file:{name}?mode=memory&cache=shared&uri=true",
+        connect_args={"uri": True, "timeout": 0.1},
+        poolclass=QueuePool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    try:
+        with session_factory() as db:
+            entry = WatchlistEntry(
+                alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ"
+            )
+            db.add(entry)
+            db.commit()
+            now = datetime(2026, 9, 26, 15, tzinfo=timezone.utc)
+            items = [
+                SourceItem(
+                    "company",
+                    str(number),
+                    f"https://example.com/{number}",
+                    f"Acme wins ${number} million contract",
+                    "Acme announced a contract.",
+                    now,
+                    ("ACME",),
+                )
+                for number in range(1, 4)
+            ]
+            assert ingest_items(db, items, [entry], FailedAnalyser(), now, [0]) == 3
+
+            token_budget = DailyNewsTokenBudget(100_000, session_factory=session_factory)
+
+            class BudgetedAnalyser(FakeAnalyser):
+                model = "budgeted-model"
+                calls = 0
+
+                def analyse(self, entries, evidence, exposures):
+                    self.calls += 1
+                    try:
+                        day = token_budget.reserve(100)
+                    except SQLAlchemyError:
+                        return None
+                    if day is None:
+                        return None
+                    token_budget.settle(day, 100, 20)
+                    if self.calls == 1:
+                        return ModelAnalysis(
+                            relevant=False,
+                            affectedAssetIds=[],
+                            category="deal",
+                            direction="unclear",
+                            headline="Irrelevant",
+                            shortSummary="",
+                            detailSummary="",
+                            keyFacts=[],
+                            unknowns=[],
+                            relevanceReason="",
+                            supportingSourceIds=[],
+                        )
+                    return super().analyse(entries, evidence, exposures)
+
+            assert retry_pending(db, [entry], BudgetedAnalyser(), now, [3]) == 3
+            assert db.query(NewsStory).filter_by(status="irrelevant").count() == 1
+            assert db.query(NewsStory).filter_by(status="ready").count() == 2
+            assert db.query(NewsStory).filter_by(status="pending").count() == 0
+            assert db.query(NewsAiDailyUsage).one().requests == 3
+    finally:
+        engine.dispose()

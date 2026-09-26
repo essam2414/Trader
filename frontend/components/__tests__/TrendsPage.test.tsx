@@ -48,7 +48,10 @@ describe("TrendsPage", () => {
 
   it("selects watchlist stocks and applies one range to all charts", async () => {
     render(<TrendsPage />);
+    expect(screen.getByRole("main")).toHaveClass("font-sans");
     expect(await screen.findByText("No charts selected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "1D" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1W" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Add stocks" }));
     const picker = document.getElementById("trends-stock-picker")!;
     expect(within(picker).getAllByRole("checkbox")).toHaveLength(3);
@@ -97,9 +100,11 @@ describe("TrendsPage", () => {
 
 describe("saved Trends preferences", () => {
   it("rejects invalid data and deduplicates saved selection", () => {
-    expect(readSavedTrends("invalid")).toEqual({ assetIds: [], range: "1D" });
+    expect(readSavedTrends("invalid")).toEqual({ assetIds: [], range: "1W" });
     expect(readSavedTrends(JSON.stringify({ assetIds: ["a", "a", 1, "b"], range: "wrong" })))
-      .toEqual({ assetIds: ["a", "b"], range: "1D" });
+      .toEqual({ assetIds: ["a", "b"], range: "1W" });
+    expect(readSavedTrends(JSON.stringify({ assetIds: ["a"], range: "1D" })))
+      .toEqual({ assetIds: ["a"], range: "1W" });
     expect(moveSelectedAsset(["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
   });
 });

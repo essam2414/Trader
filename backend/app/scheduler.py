@@ -41,7 +41,7 @@ def _run_digest_job(job: str) -> dict[str, int] | None:
         if job == "news":
             from .services.news_digest import run_news_sync
 
-            run_news_sync(session)
+            return run_news_sync(session)
         else:
             from .services.news_events import run_events_sync
 
@@ -55,8 +55,8 @@ def _run_digest_job(job: str) -> dict[str, int] | None:
         lock.release()
 
 
-def run_news_job() -> None:
-    _run_digest_job("news")
+def run_news_job() -> dict[str, int] | None:
+    return _run_digest_job("news")
 
 
 def run_events_job() -> dict[str, int] | None:

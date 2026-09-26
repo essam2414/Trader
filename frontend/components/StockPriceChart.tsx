@@ -65,19 +65,19 @@ function StockHeader({ entry, chart, compact }: { entry: WatchlistEntry | null; 
   const symbol = entry?.symbol ?? chart?.symbol;
   if (!name || !symbol) return <div className="h-16" aria-hidden="true" />;
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
       {entry ? <StockLogo name={entry.name} logoUrl={entry.logoUrl} size="detail" /> : <div className="h-10 w-10 rounded-xl bg-[#1b2227] sm:h-12 sm:w-12" />}
       <div className="min-w-0">
         <p className="text-xs font-semibold tracking-wide text-neutral-400">{symbol} · {entry?.exchange ?? "US"}</p>
         {compact
           ? <h2 className="mt-0.5 truncate text-base font-medium leading-tight text-neutral-50" title={name}>{conciseStockName(name)}</h2>
-          : <h1 className="mt-0.5 truncate text-lg font-medium leading-tight tracking-tight text-neutral-50 sm:text-xl">{conciseStockName(name)}</h1>}
+          : <h1 className="mt-0.5 truncate text-lg font-medium leading-tight tracking-tight text-neutral-50 sm:text-xl" title={name}>{conciseStockName(name)}</h1>}
       </div>
     </div>
   );
 }
 
-function StockPriceSummary({ price, entry, className = "" }: { price: number | null; entry: WatchlistEntry | null; className?: string }) {
+function StockPriceSummary({ price, entry }: { price: number | null; entry: WatchlistEntry | null }) {
   const previousClose = entry?.quote.previousClose;
   const change = price !== null && previousClose !== null && previousClose !== undefined ? price - previousClose : entry?.quote.dollarChange;
   const percentage = change !== null && change !== undefined && previousClose ? (change / previousClose) * 100 : entry?.quote.percentChange;
@@ -87,15 +87,13 @@ function StockPriceSummary({ price, entry, className = "" }: { price: number | n
     ? `${direction === "positive" ? "↗ " : direction === "negative" ? "↘ " : ""}${formatPriceNumber(Math.abs(change))} (${Math.abs(percentage).toFixed(2)}%) today`
     : null;
   return (
-    <div className={`mt-9 sm:mt-11 ${className}`}>
-      <div className="flex flex-wrap items-baseline gap-x-24 gap-y-1">
-        <p data-testid="stock-current-price" className="text-[clamp(2rem,3vw,2.5rem)] font-sans font-semibold leading-none tracking-tight text-white [font-variant-numeric:tabular-nums]">
-          {price === null ? "—" : <><span className="mr-0.5 inline-block align-baseline text-[0.56em] tracking-normal">$</span>{formatPriceNumber(price)}</>}
-        </p>
-        {changeLabel && (
-          <p className={`text-[clamp(2rem,3vw,2.5rem)] font-sans font-semibold leading-none tracking-tight [font-variant-numeric:tabular-nums] ${directionClass}`}>{changeLabel}</p>
-        )}
-      </div>
+    <div className="flex shrink-0 items-baseline gap-3 whitespace-nowrap sm:gap-5">
+      <p data-testid="stock-current-price" className="font-sans text-2xl font-semibold leading-none tracking-tight text-white [font-variant-numeric:tabular-nums] lg:text-[2rem]">
+        {price === null ? "—" : <><span className="mr-0.5 inline-block align-baseline text-[0.56em] tracking-normal">$</span>{formatPriceNumber(price)}</>}
+      </p>
+      {changeLabel && (
+        <p className={`font-sans text-sm font-semibold leading-none [font-variant-numeric:tabular-nums] sm:text-base ${directionClass}`}>{changeLabel}</p>
+      )}
     </div>
   );
 }
@@ -219,15 +217,16 @@ export function StockPriceChart({ assetId, range: controlledRange, compact = fal
   const purchaseLevelPercent = purchasePrice === null
     ? null
     : ((yDomain[1] - purchasePrice) / (yDomain[1] - yDomain[0])) * 100;
+  const axisWidth = compact ? 48 : 72;
 
   return (
     <section aria-label={compact ? `${currentEntry?.symbol ?? chart?.symbol ?? "Stock"} price chart` : "Stock price chart"} className="stock-price-chart w-full font-sans">
       <div className="w-full">
-        <div className={compact ? "flex min-w-0 items-center justify-between gap-2" : "lg:flex lg:flex-wrap lg:items-center lg:gap-24"}>
+        <div role="group" aria-label="Stock overview" className={compact ? "flex min-w-0 items-center justify-between gap-2" : "flex min-w-0 flex-nowrap items-center justify-between gap-4 sm:gap-6"}>
           <StockHeader entry={currentEntry} chart={chart} compact={compact} />
-          {!compact && <StockPriceSummary price={displayedPrice} entry={currentEntry} className="lg:mt-0 lg:shrink-0" />}
+          {!compact && <StockPriceSummary price={displayedPrice} entry={currentEntry} />}
         </div>
-        {compact && <div className="mt-5 flex items-baseline justify-between gap-2 font-mono">
+        {compact && <div className="mt-5 flex items-baseline justify-between gap-2 font-sans [font-variant-numeric:tabular-nums]">
           <p className="truncate text-xl font-semibold text-white">{displayedPrice === null ? "—" : formatPrice(displayedPrice)}</p>
           <p aria-label="Selected range return" title="Change from the first chart bar open to the latest displayed price" className={`shrink-0 text-sm font-semibold ${rangeReturn === null ? "text-neutral-500" : rangeReturn > 0 ? "text-[#32e64d]" : rangeReturn < 0 ? "text-[#ff4b55]" : "text-neutral-400"}`}>
             {rangeReturn === null ? "—" : `${rangeReturn > 0 ? "+" : ""}${rangeReturn.toFixed(2)}%`}
@@ -236,19 +235,19 @@ export function StockPriceChart({ assetId, range: controlledRange, compact = fal
         {!compact && <div aria-hidden="true" className="mt-6 -mx-5 w-[calc(100%+2.5rem)] border-t border-neutral-800/80 sm:-mx-8 sm:w-[calc(100%+4rem)] lg:-mx-10 lg:w-[calc(100%+5rem)]" />}
         <div className={compact ? "" : "lg:grid lg:grid-cols-[55fr_45fr]"}>
           <div className={compact ? "min-w-0" : "min-w-0 lg:pr-8"}>
-            <div className={compact ? "relative mt-4 h-[220px] w-full" : "relative mt-5 h-[280px] w-full sm:mt-6 sm:h-[340px] lg:h-[380px]"}>
+            <div data-testid="stock-chart-plot" className={compact ? "relative -ml-2 -mr-3 mt-4 h-[220px] w-[calc(100%+1.25rem)]" : "relative mt-5 h-[280px] w-full sm:mt-6 sm:h-[340px] lg:h-[380px]"}>
             {error ? <div className="flex h-full items-center justify-center text-sm text-neutral-500">Price history unavailable.</div> : isLoading ? <div className="flex h-full items-center justify-center text-sm text-neutral-600">Loading price history…</div> : plotData.length === 0 ? <div className="flex h-full items-center justify-center text-sm text-neutral-500">Price history unavailable.</div> : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={plotData} margin={{ top: 20, right: 0, bottom: 4, left: 0 }} accessibilityLayer={false}>
                   <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#00AEEF" stopOpacity={0.22} /><stop offset="72%" stopColor="#00AEEF" stopOpacity={0.035} /><stop offset="100%" stopColor="#00AEEF" stopOpacity={0} /></linearGradient></defs>
-                  <YAxis domain={yDomain} orientation="right" axisLine={false} tickLine={false} tick={{ fill: "#737373", fontSize: 11 }} tickFormatter={formatAxisPrice} tickCount={8} width={72} tickMargin={18} />
+                  <YAxis domain={yDomain} orientation="right" axisLine={false} tickLine={false} tick={{ fill: "#737373", fontSize: 11, fontFamily: "var(--font-sans)" }} tickFormatter={formatAxisPrice} tickCount={8} width={axisWidth} tickMargin={compact ? 4 : 18} />
                   <Tooltip content={<ChartTooltip />} cursor={false} wrapperStyle={{ outline: "none" }} />
                   <Area type="linear" dataKey="close" stroke="#00AEEF" strokeWidth={2.5} fill={`url(#${gradientId})`} dot={false} activeDot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
             {purchaseLevelPercent !== null && purchasePrice !== null && (
-              <div aria-hidden="false" className="pointer-events-none absolute top-5 right-[72px] bottom-1 left-0 z-10">
+              <div aria-hidden="false" className="pointer-events-none absolute top-5 right-0 bottom-1 left-0 z-10" style={{ right: axisWidth }}>
                 <div
                   data-testid="purchase-price-line"
                   role="img"

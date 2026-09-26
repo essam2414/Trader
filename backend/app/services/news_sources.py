@@ -7,7 +7,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -116,6 +116,9 @@ def company_match(text: str, entry: WatchlistEntry) -> bool:
     lower = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
     name_words = re.findall(r"[a-z0-9]+", entry.name.lower())
     suffixes = {
+        "a",
+        "b",
+        "co",
         "inc",
         "corp",
         "corporation",
@@ -463,13 +466,62 @@ def rss_items(http: NewsHttp, url: str, provider: str, symbols: tuple[str, ...] 
     return items
 
 
-def spglobal_index_items(http: NewsHttp, entries: list[WatchlistEntry]) -> list[SourceItem]:
+def bloom_energy_items(
+    http: NewsHttp,
+    feed_url: str,
+    symbols: tuple[str, ...] = (),
+    now: datetime | None = None,
+) -> list[SourceItem]:
+    """Use recent official newsroom releases when Bloom's RSS endpoint rejects requests."""
+    try:
+        return rss_items(http, feed_url, "ir_be", symbols)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 403:
+            raise
+
+    newsroom_url = "https://www.bloomenergy.com/newsroom/"
+    html = http.get(newsroom_url).text
+    items = []
+    today = (now or datetime.now(timezone.utc)).date()
+    dated_releases = 0
+    for article in re.findall(
+        r"<article\b[^>]*\bnews_type-press-release\b[^>]*>.*?</article>", html, re.I | re.S
+    ):
+        date_match = re.search(r'<div\b[^>]*class=["\']blogdate["\'][^>]*>(.*?)</div>', article, re.I | re.S)
+        if not date_match:
+            continue
+        try:
+            release_date = datetime.strptime(plain_text(date_match.group(1)), "%B %d, %Y").date()
+        except ValueError:
+            continue
+        link = re.search(r'<h5>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', article, re.I | re.S)
+        if not link:
+            continue
+        url = canonical_url(urljoin(newsroom_url, unescape(link.group(1))))
+        parsed = urlparse(url)
+        title = plain_text(link.group(2), 500)
+        if parsed.hostname != "www.bloomenergy.com" or not parsed.path.startswith("/news/") or not title:
+            continue
+        dated_releases += 1
+        if not today - timedelta(days=7) <= release_date <= today:
+            continue
+        items.append(SourceItem("ir_be", source_key("ir_be", url), url, title, "", None, symbols))
+    if not dated_releases:
+        raise ValueError("Bloom Energy newsroom press-release structure changed")
+    return items
+
+
+def spglobal_index_items(
+    http: NewsHttp, entries: list[WatchlistEntry], now: datetime | None = None
+) -> list[SourceItem]:
     """Read official S&P index changes from its public press archive."""
     archive = "https://press.spglobal.com/index.php?category=784&l=50"
     html = http.get(archive).text
     if "wd_item_list" not in html:
         raise ValueError("S&P press archive structure changed")
     items = []
+    today = (now or datetime.now(timezone.utc)).date()
+    earliest = today - timedelta(days=7)
     pattern = re.compile(
         r'<li class="wd_item">.*?<div class="wd_title"><a href="([^"]+)">(.*?)</a>',
         re.I | re.S,
@@ -481,7 +533,21 @@ def spglobal_index_items(http: NewsHttp, entries: list[WatchlistEntry]) -> list[
             r"\b(?:set to join|to join|added to|join the s&p|index changes)\b", title, re.I
         ):
             continue
+        slug_date = re.match(r"/(\d{4}-\d{2}-\d{2})-", urlparse(url).path)
+        release_day = None
+        if slug_date:
+            try:
+                release_day = datetime.fromisoformat(slug_date.group(1)).date()
+            except ValueError:
+                continue
+            if not earliest <= release_day <= today:
+                continue
         page = http.get(url).text
+        metadata = ArticleMetadata()
+        metadata.feed(page[:30_000])
+        release_day = metadata.published.date() if metadata.published else release_day
+        if release_day is None or not earliest <= release_day <= today:
+            continue
         body_start = page.find('class="wd_body wd_news_body')
         if body_start < 0:
             continue
@@ -489,8 +555,6 @@ def spglobal_index_items(http: NewsHttp, entries: list[WatchlistEntry]) -> list[
         matched = [entry for entry in entries if company_match(body, entry)]
         if not matched:
             continue
-        metadata = ArticleMetadata()
-        metadata.feed(page[:30_000])
         excerpt = f"{metadata.description} {body[:5500]}"[:6000]
         items.append(
             SourceItem(

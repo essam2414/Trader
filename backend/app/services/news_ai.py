@@ -29,7 +29,7 @@ Category = Literal[
     "industry",
     "other",
 ]
-Direction = Literal["upside", "downside", "mixed", "unclear"]
+Direction = Literal["upside", "downside", "unclear"]
 
 
 class ModelAnalysis(BaseModel):
@@ -93,7 +93,10 @@ INSTRUCTIONS = (
     "A Form 4 sale reports a transaction, not the insider's motive. Distinguish announced deals "
     "from signed or completed deals. For analyst targets, include the firm and old/new targets only "
     "when supplied. If evidence is headline-only, do not add details. Use only supplied asset IDs "
-    "and source IDs. Keep detailSummary to at most three sentences, three keyFacts, and two unknowns. "
+    "and source IDs. Classify direction for the watched stock as upside for a favourable catalyst, "
+    "downside for an adverse catalyst, or unclear when the effect is unknown or has competing "
+    "outcomes. Keep detailSummary to at most three sentences, three keyFacts, "
+    "and two unknowns. "
     "State missing terms as unknowns. Do not predict prices, give trade advice, or invent facts, "
     "numbers, release times, or quotes. Return relevant=false when no watched stock is affected."
 )

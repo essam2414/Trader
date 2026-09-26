@@ -88,6 +88,11 @@ def test_responses_api_uses_strict_card_schema_and_server_side_key(monkeypatch):
     assert options["json"]["store"] is False
     assert options["json"]["reasoning"] == {"effort": "none"}
     assert options["json"]["text"]["format"]["strict"] is True
+    assert options["json"]["text"]["format"]["schema"]["properties"]["direction"]["enum"] == [
+        "upside",
+        "downside",
+        "unclear",
+    ]
     assert budget.settled[0][2] == 123
 
     result["supportingSourceIds"] = [999]
