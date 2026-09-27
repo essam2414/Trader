@@ -165,6 +165,17 @@ export interface StockChart {
   provisionalIexBars: StockChartBar[];
 }
 
+export interface TrendRank {
+  assetId: string;
+  symbol: string;
+  status: "ready" | "insufficient_history" | "unavailable";
+  score: number | null;
+  weekTrendPercent: number | null;
+  monthRecoveryPercent: number | null;
+  risingSessions: number | null;
+  asOf: string | null;
+}
+
 export type MarketSessionPhase = "pre_market" | "regular" | "after_hours" | "overnight" | "closed";
 
 export interface MarketSession {

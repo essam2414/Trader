@@ -86,7 +86,7 @@ describe("NewsSection", () => {
     const cards = await screen.findAllByRole("button", { name: /Acme wins supply agreement/i });
     expect(cards).toHaveLength(1);
     expect(within(cards[0]).getByText("ACME")).toBeInTheDocument();
-    expect(screen.queryByText(/Some sources are unavailable/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Coverage incomplete · 1 source unavailable/)).toBeInTheDocument();
     const warning = screen.getByRole("button", { name: "News collection errors" });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     fireEvent.mouseEnter(warning);

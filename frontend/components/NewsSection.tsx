@@ -287,7 +287,10 @@ export function NewsSection() {
         </div>
       </div>
     </div>
-    <div className="mt-2 shrink-0 text-xs text-neutral-500">{activeStatus?.lastSuccessfulRunAt ? `Last collected ${timeLabel(activeStatus.lastSuccessfulRunAt)}` : "Waiting for first collection"}</div>
+    <div className="mt-2 shrink-0 text-xs text-neutral-500">
+      {activeStatus?.lastSuccessfulRunAt ? `Last collected ${timeLabel(activeStatus.lastSuccessfulRunAt)}` : "Waiting for first collection"}
+      {activeStatus && activeStatus.failedSources.length > 0 && <span className="ml-2 text-orange-300">Coverage incomplete · {activeStatus.failedSources.length} {activeStatus.failedSources.length === 1 ? "source" : "sources"} unavailable</span>}
+    </div>
     {tab === "news" && newsStatus && newsStatus.pendingSummaries > 0 && <p role="status" className="mt-2 rounded-md bg-amber-400/10 px-3 py-2 text-xs text-amber-300">{newsStatus.pendingSummaries} source-backed {newsStatus.pendingSummaries === 1 ? "story has" : "stories have"} a summary pending.</p>}
     <div aria-label={tab === "news" ? "News articles" : "Upcoming events"} className="dashboard-pane-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">
       {isLoading ? <p className="text-sm text-neutral-500">Loading…</p> : tab === "news" ? (

@@ -96,6 +96,45 @@ describe("TrendsPage", () => {
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("asset-aapl"), expect.objectContaining({ method: "DELETE" }));
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem("trader.trends.v1")!).assetIds).toEqual(["asset-msft"]));
   });
+
+  it("ranks only on a Trend click and saves the returned order", async () => {
+    window.localStorage.setItem("trader.trends.v1", JSON.stringify({ assetIds: ["asset-aapl", "asset-msft"], range: "1W" }));
+    const fetchMock = vi.fn(async (input: string) => ({
+      ok: true,
+      json: async () => input.startsWith("/api/watchlist/trends?")
+        ? [
+          { assetId: "asset-msft", symbol: "MSFT", status: "ready", score: 82, weekTrendPercent: 4, monthRecoveryPercent: 12, risingSessions: 3, asOf: "2026-09-25T19:30:00Z" },
+          { assetId: "asset-aapl", symbol: "AAPL", status: "ready", score: 51, weekTrendPercent: 2, monthRecoveryPercent: 5, risingSessions: 2, asOf: "2026-09-25T19:30:00Z" },
+        ]
+        : input === "/api/watchlist/positions" ? {} : entries,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TrendsPage />);
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "1M" }));
+    expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/watchlist/trends?"))).toBe(false);
+    expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-aapl", "asset-msft"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Trend" }));
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-msft", "asset-aapl"]));
+    expect(fetchMock.mock.calls.filter(([url]) => url.startsWith("/api/watchlist/trends?"))).toHaveLength(1);
+    expect(screen.getByText("Trend #1 · 82/100")).toBeInTheDocument();
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("trader.trends.v1")!).assetIds).toEqual(["asset-msft", "asset-aapl"]));
+  });
+
+  it("keeps chart order when trend history cannot be loaded", async () => {
+    window.localStorage.setItem("trader.trends.v1", JSON.stringify({ assetIds: ["asset-aapl", "asset-msft"], range: "1W" }));
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => ({
+      ok: !input.startsWith("/api/watchlist/trends?"),
+      json: async () => input === "/api/watchlist/positions" ? {} : entries,
+    })));
+    render(<TrendsPage />);
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart")).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "Trend" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your chart order was kept");
+    expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-aapl", "asset-msft"]);
+  });
 });
 
 describe("saved Trends preferences", () => {
