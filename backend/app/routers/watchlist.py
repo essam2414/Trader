@@ -39,7 +39,7 @@ from ..schemas import (
     WatchlistQuoteOut,
     WatchlistSearchResult,
 )
-from ..services.chart_data import CHART_RANGES, ChartDataSource, session_for
+from ..services.chart_data import CHART_ADJUSTMENT, CHART_RANGES, ChartDataSource, session_for
 from ..services.watchlist import (
     WatchlistLimitError,
     add_entry,
@@ -484,7 +484,7 @@ def get_stock_chart(
     db: Session = Depends(get_db),
     chart_data_source: ChartDataSource | None = Depends(get_chart_data_source),
 ) -> StockChartOut:
-    """Return on-demand delayed SIP history plus a visibly separate live IEX tail."""
+    """Return split-adjusted delayed SIP history plus a visibly separate live IEX tail."""
     entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="Watchlist entry not found")
@@ -515,7 +515,7 @@ def get_stock_chart(
         range=range,
         intervalSeconds=chart_range.output_interval_seconds,
         canonicalFeed="sip",
-        adjustment="raw",
+        adjustment=CHART_ADJUSTMENT,
         canonicalThrough=snapshot.canonical_through,
         delaySeconds=900,
         canonicalBars=[output(bar) for bar in snapshot.canonical_bars],

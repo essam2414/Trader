@@ -174,7 +174,7 @@ class StockChartOut(BaseModel):
     range: Literal["1D", "1W", "1M", "3M", "1Y", "MAX"]
     intervalSeconds: int
     canonicalFeed: Literal["sip"]
-    adjustment: Literal["raw"]
+    adjustment: Literal["split"]
     canonicalThrough: datetime
     delaySeconds: int
     canonicalBars: list[StockChartBarOut]

@@ -35,6 +35,18 @@ def test_chart_range_uses_its_native_alpaca_timeframe(range_name, timeframe):
     assert iex_client.calls[0]["timeframe"] == "1Min"
 
 
+@pytest.mark.parametrize("range_name", ["1D", "1W", "1M", "3M", "1Y", "MAX"])
+def test_chart_ranges_request_split_adjusted_sip_history(range_name):
+    sip_client = RecordingMarketDataClient()
+    iex_client = RecordingMarketDataClient()
+    source = AlpacaChartDataSource(sip_client, iex_client)
+
+    source.load_chart(watchlist_entry(), CHART_RANGES[range_name], chart_now())
+
+    assert sip_client.calls[0]["adjustment"] == "split"
+    assert iex_client.calls[0]["adjustment"] == "raw"
+
+
 def test_one_day_chart_outputs_fifteen_minute_sip_closes():
     sip_bars = [
         historical_bar(datetime(2026, 9, 23, 14, minute, tzinfo=timezone.utc), Decimal("200") + minute)
@@ -147,6 +159,7 @@ def test_chart_route_keeps_its_response_contract_without_writing_price_bars(clie
     assert response.status_code == 200
     assert response.json()["intervalSeconds"] == 900
     assert response.json()["canonicalFeed"] == "sip"
+    assert response.json()["adjustment"] == "split"
     assert response.json()["provisionalIexBars"]
     assert db_session.query(MarketPriceBar).count() == 0
 

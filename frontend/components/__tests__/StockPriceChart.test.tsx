@@ -10,7 +10,7 @@ const chart: StockChart = {
   range: "1D",
   intervalSeconds: 900,
   canonicalFeed: "sip",
-  adjustment: "raw",
+  adjustment: "split",
   canonicalThrough: "2026-09-23T14:30:00Z",
   delaySeconds: 900,
   canonicalBars: [bar("2026-09-23T14:00:00Z", 136), bar("2026-09-23T14:15:00Z", 137)],

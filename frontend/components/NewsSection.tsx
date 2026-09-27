@@ -273,7 +273,7 @@ export function NewsSection() {
       ? [refreshMessage] : []),
   ];
 
-  return <section className="flex min-h-0 min-w-0 flex-col pt-6" aria-label="News" aria-labelledby="news-heading">
+  return <section id="analysis" className="flex min-h-0 min-w-0 flex-col pt-6" aria-label="News" aria-labelledby="news-heading">
     <div className="flex shrink-0 items-center justify-between gap-4">
       <h2 id="news-heading" className="text-xl font-semibold tracking-tight text-neutral-100">Analysis</h2>
       <div className="flex shrink-0 items-center gap-3">

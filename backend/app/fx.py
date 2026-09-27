@@ -12,6 +12,7 @@ consistent currency.
 import httpx
 
 _FRANKFURTER_BASE_URL = "https://api.frankfurter.dev/v1"
+HISTORICAL_RATE_TIMEOUT_SECONDS = 10.0
 
 
 def get_historical_rate(date: str, from_currency: str, to_currency: str) -> float:
@@ -28,7 +29,7 @@ def get_historical_rate(date: str, from_currency: str, to_currency: str) -> floa
     response = httpx.get(
         f"{_FRANKFURTER_BASE_URL}/{date}",
         params={"base": from_currency, "symbols": to_currency},
-        timeout=10.0,
+        timeout=HISTORICAL_RATE_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
     return response.json()["rates"][to_currency]

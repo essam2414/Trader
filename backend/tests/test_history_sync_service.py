@@ -391,23 +391,97 @@ def test_native_price_backfill_preserves_progress_when_rate_limited(db_session):
     assert state.continuation_cursor == "2"
 
 
-def test_sync_history_uses_six_recent_pages_after_initial_backfill(db_session):
+def test_sync_history_limits_all_sources_to_three_pages_per_run(db_session):
     db_session.add_all([HistorySyncState(source="orders"), HistorySyncState(source="dividends")])
     db_session.commit()
     fake_client = MagicMock()
     fake_client.get_historical_orders.side_effect = [
         {"items": [], "nextPagePath": f"/api/v0/equity/history/orders?cursor={page}&limit=50"}
-        for page in range(1, 7)
+        for page in range(1, 3)
     ]
     fake_client.get_dividends.side_effect = [
-        {"items": [], "nextPagePath": f"/api/v0/equity/history/dividends?cursor={page}&limit=50"}
-        for page in range(1, 7)
+        {"items": [], "nextPagePath": "/api/v0/equity/history/dividends?cursor=1&limit=50"}
     ]
 
     sync_history(db_session, fake_client, target_currency="USD")
 
-    assert fake_client.get_historical_orders.call_count == 6
-    assert fake_client.get_dividends.call_count == 6
+    assert fake_client.get_historical_orders.call_count == 2
+    assert fake_client.get_dividends.call_count == 1
+    assert db_session.get(HistorySyncState, "orders").continuation_cursor == "2"
+    assert db_session.get(HistorySyncState, "dividends").continuation_cursor == "1"
+
+
+def test_sync_history_resumes_order_catch_up_from_saved_cursor(db_session):
+    db_session.add_all(
+        [
+            OrderFill(
+                id="101",
+                order_id="1",
+                ticker="AAPL_US_EQ",
+                side="BUY",
+                quantity=10.0,
+                source_price=100.0,
+                source_currency="USD",
+                fill_price=100.0,
+                net_value=1000.0,
+                realised_profit_loss=0.0,
+                fees=0.0,
+                currency="USD",
+                filled_at=datetime(2026, 1, 1, 10, tzinfo=timezone.utc),
+            ),
+            HistorySyncState(source="orders", continuation_cursor="2"),
+            HistorySyncState(source="dividends"),
+            HistorySyncState(source=NATIVE_PRICE_BACKFILL_SOURCE),
+        ]
+    )
+    db_session.commit()
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.return_value = ORDER_PAGE_1
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+
+    sync_history(db_session, fake_client, target_currency="USD")
+
+    fake_client.get_historical_orders.assert_called_once_with(cursor=2, limit=50)
+    assert db_session.get(HistorySyncState, "orders").continuation_cursor is None
+
+
+def test_sync_history_starts_new_backfill_in_resumable_batches(db_session):
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.side_effect = [
+        {"items": [], "nextPagePath": "/api/v0/equity/history/orders?cursor=1&limit=50"},
+        {"items": [], "nextPagePath": "/api/v0/equity/history/orders?cursor=2&limit=50"},
+    ]
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+
+    sync_history(db_session, fake_client, target_currency="USD")
+
+    assert fake_client.get_historical_orders.call_count == 2
+    assert fake_client.get_dividends.call_count == 1
+    assert db_session.get(HistorySyncState, "orders").continuation_cursor == "2"
+
+
+def test_sync_history_does_not_start_new_pages_after_deadline(db_session):
+    fake_client = MagicMock()
+
+    sync_history(db_session, fake_client, target_currency="USD", deadline=0.0)
+
+    fake_client.get_historical_orders.assert_not_called()
+    fake_client.get_dividends.assert_not_called()
+
+
+@patch("app.services.history_sync.time.monotonic", return_value=0.0)
+@patch("app.services.history_sync.get_historical_rate")
+def test_sync_history_defers_fx_page_when_time_budget_cannot_cover_rate_lookup(
+    mock_get_rate, _mock_monotonic, db_session
+):
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.return_value = ORDER_PAGE_1
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+
+    sync_history(db_session, fake_client, target_currency="GBP", deadline=5.0)
+
+    assert db_session.query(OrderFill).count() == 0
+    mock_get_rate.assert_not_called()
 
 
 def test_sync_history_marks_existing_history_as_backfilled(db_session):
@@ -425,7 +499,7 @@ def test_sync_history_marks_existing_history_as_backfilled(db_session):
 
     sync_history(db_session, fake_client, target_currency="USD")
 
-    assert fake_client.get_historical_orders.call_count == 6
+    assert fake_client.get_historical_orders.call_count == 2
     assert {state.source for state in db_session.query(HistorySyncState).all()} == {
         "orders",
         "dividends",

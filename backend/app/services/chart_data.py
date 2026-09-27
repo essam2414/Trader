@@ -14,6 +14,7 @@ from app.alpaca_market_data import NEW_YORK, AlpacaMarketDataClient, HistoricalB
 from app.models import WatchlistEntry
 
 SIP_DELAY = timedelta(minutes=15)
+CHART_ADJUSTMENT = "split"
 MAX_HISTORY_WINDOW = timedelta(days=5 * 366)
 ONE_MINUTE = 60
 FIFTEEN_MINUTES = 15 * ONE_MINUTE
@@ -65,7 +66,7 @@ class ChartDataSource(Protocol):
     """Seam for supplying chart data without changing the chart route contract."""
 
     def load_chart(self, entry: WatchlistEntry, chart_range: ChartRange, now: datetime) -> ChartSnapshot:
-        """Return delayed-SIP history plus a temporary IEX tail for one chart range."""
+        """Return split-adjusted delayed-SIP history plus a temporary IEX tail for one chart range."""
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ class _CachedSIPRange:
 
 
 class AlpacaChartDataSource:
-    """Fetch chart history on demand without persisting price bars in the application database."""
+    """Fetch split-adjusted chart history on demand without persisting price bars."""
 
     def __init__(
         self,
@@ -113,7 +114,7 @@ class AlpacaChartDataSource:
             start,
             canonical_through,
             chart_range.alpaca_timeframe,
-            adjustment="raw",
+            adjustment=CHART_ADJUSTMENT,
         )
         chart_bars = aggregate_chart_bars(
             (

@@ -158,7 +158,7 @@ export interface StockChart {
   range: ChartRange;
   intervalSeconds: number;
   canonicalFeed: "sip";
-  adjustment: "raw";
+  adjustment: "split";
   canonicalThrough: string;
   delaySeconds: number;
   canonicalBars: StockChartBar[];
