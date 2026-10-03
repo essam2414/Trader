@@ -22,8 +22,9 @@ _digest_locks = {"news": Lock(), "events": Lock()}
 _advisory_keys = {"news": 27182818, "events": 27182819}
 
 
-def _run_digest_job(job: str) -> dict[str, int] | None:
-    lock = _digest_locks[job]
+def _run_digest_job(job: str, *, force: bool = False) -> dict[str, int] | None:
+    lock_key = "news" if job == "news_pending" else job
+    lock = _digest_locks[lock_key]
     if not settings.news_enabled or not lock.acquire(blocking=False):
         return None
     session = SessionLocal()
@@ -34,7 +35,7 @@ def _run_digest_job(job: str) -> dict[str, int] | None:
             lock_connection = engine.connect()
             advisory_locked = bool(
                 lock_connection.execute(
-                    sql_text("SELECT pg_try_advisory_lock(:key)"), {"key": _advisory_keys[job]}
+                    sql_text("SELECT pg_try_advisory_lock(:key)"), {"key": _advisory_keys[lock_key]}
                 ).scalar()
             )
             if not advisory_locked:
@@ -42,22 +43,32 @@ def _run_digest_job(job: str) -> dict[str, int] | None:
         if job == "news":
             from .services.news_digest import run_news_sync
 
-            return run_news_sync(session)
+            return run_news_sync(session, force=force)
+        if job == "news_pending":
+            from .services.news_digest import run_pending_analysis
+
+            return {"pending_retried": run_pending_analysis(session)}
         else:
             from .services.news_events import run_events_sync
 
             return run_events_sync(session)
     finally:
         if advisory_locked:
-            lock_connection.execute(sql_text("SELECT pg_advisory_unlock(:key)"), {"key": _advisory_keys[job]})
+            lock_connection.execute(
+                sql_text("SELECT pg_advisory_unlock(:key)"), {"key": _advisory_keys[lock_key]}
+            )
         if lock_connection is not None:
             lock_connection.close()
         session.close()
         lock.release()
 
 
-def run_news_job() -> dict[str, int] | None:
-    return _run_digest_job("news")
+def run_news_job(*, force: bool = False) -> dict[str, int] | None:
+    return _run_digest_job("news", force=force)
+
+
+def run_pending_news_job() -> dict[str, int] | None:
+    return _run_digest_job("news_pending")
 
 
 def run_events_job() -> dict[str, int] | None:

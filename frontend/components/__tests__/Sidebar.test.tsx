@@ -27,7 +27,7 @@ describe("Sidebar", () => {
       ok: true,
       json: async () => [
         { ...event, id: "earnings:later", title: "Later earnings", eventDate: "2026-11-05" },
-        event,
+        { ...event, title: "Acme earnings report with updated guidance and a detailed investor discussion" },
       ],
     })));
 
@@ -36,6 +36,10 @@ describe("Sidebar", () => {
     const card = await screen.findByRole("region", { name: "Next event" });
     expect(card).toHaveClass("bg-orange-900/60");
     expect(card).toHaveTextContent("21 Oct 2026");
+    const title = screen.getByRole("heading", { name: "Acme earnings report with updated guidance and a detailed investor discussion" });
+    expect(title).toHaveClass("text-[13px]", "break-words");
+    expect(title).not.toHaveClass("truncate", "line-clamp-2");
+    expect(screen.getByText(/21 Oct 2026/)).toHaveClass("text-[11px]");
     expect(card).not.toHaveTextContent("ACME");
     expect(screen.queryByRole("link", { name: /Acme earnings report/i })).not.toBeInTheDocument();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/events", expect.objectContaining({ cache: "no-store" })));

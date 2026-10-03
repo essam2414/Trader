@@ -21,6 +21,7 @@ FIFTEEN_MINUTES = 15 * ONE_MINUTE
 THIRTY_MINUTES = 30 * ONE_MINUTE
 ONE_HOUR = 60 * ONE_MINUTE
 SIP_CACHE_TTL_SECONDS = 30
+ONE_DAY_FALLBACK_LOOKBACK = timedelta(days=14)
 
 
 @dataclass(frozen=True)
@@ -65,8 +66,14 @@ class ChartSnapshot:
 class ChartDataSource(Protocol):
     """Seam for supplying chart data without changing the chart route contract."""
 
-    def load_chart(self, entry: WatchlistEntry, chart_range: ChartRange, now: datetime) -> ChartSnapshot:
-        """Return split-adjusted delayed-SIP history plus a temporary IEX tail for one chart range."""
+    def load_chart(
+        self,
+        entry: WatchlistEntry,
+        chart_range: ChartRange,
+        now: datetime,
+        include_provisional_iex: bool = True,
+    ) -> ChartSnapshot:
+        """Return split-adjusted SIP history, optionally bridged with a live IEX tail."""
 
 
 @dataclass(frozen=True)
@@ -91,10 +98,18 @@ class AlpacaChartDataSource:
         self._sip_cache: dict[tuple[str, str], _CachedSIPRange] = {}
         self._cache_lock = Lock()
 
-    def load_chart(self, entry: WatchlistEntry, chart_range: ChartRange, now: datetime) -> ChartSnapshot:
-        """Load cached delayed SIP history and a fresh IEX bridge to the present."""
+    def load_chart(
+        self,
+        entry: WatchlistEntry,
+        chart_range: ChartRange,
+        now: datetime,
+        include_provisional_iex: bool = True,
+    ) -> ChartSnapshot:
+        """Load cached delayed SIP history and, when requested, the fresh IEX bridge."""
         canonical_bars, canonical_through = self._sip_bars(entry, chart_range, now)
-        iex_bars = self._iex_tail(entry, chart_range, canonical_through, now)
+        iex_bars = (
+            self._iex_tail(entry, chart_range, canonical_through, now) if include_provisional_iex else []
+        )
         return ChartSnapshot(canonical_bars, iex_bars, canonical_through)
 
     def _sip_bars(
@@ -116,6 +131,20 @@ class AlpacaChartDataSource:
             chart_range.alpaca_timeframe,
             adjustment=CHART_ADJUSTMENT,
         )
+        if chart_range.name == "1D" and chart_range.window is not None and not bars:
+            # A calendar-day window is empty on weekends and holidays. Anchor the
+            # displayed day to the latest real bar instead of inventing closed-market bars.
+            older_bars = self._sip_client.get_historical_bars(
+                entry.symbol,
+                canonical_through - ONE_DAY_FALLBACK_LOOKBACK,
+                canonical_through,
+                chart_range.alpaca_timeframe,
+                adjustment=CHART_ADJUSTMENT,
+            )
+            if older_bars:
+                latest_bar = max(_as_utc(bar.starts_at) for bar in older_bars)
+                fallback_start = latest_bar - chart_range.window
+                bars = [bar for bar in older_bars if _as_utc(bar.starts_at) > fallback_start]
         chart_bars = aggregate_chart_bars(
             (
                 _bar_from_provider(bar, "regular" if chart_range.alpaca_timeframe == "1Day" else None)
@@ -220,6 +249,9 @@ def aggregate_bars(bars: Iterable[ChartBar], interval_seconds: int) -> list[Char
 
 def chart_bucket_start(timestamp: datetime, chart_range: ChartRange) -> datetime:
     """Return the start of the currently forming output bar for a chart range."""
+    if chart_range.calendar_bucket == "day":
+        local = _as_utc(timestamp).astimezone(NEW_YORK)
+        return datetime.combine(local.date(), time(0), NEW_YORK).astimezone(timezone.utc)
     if chart_range.calendar_bucket == "week":
         local = _as_utc(timestamp).astimezone(NEW_YORK)
         week_start = local.date() - timedelta(days=local.weekday())

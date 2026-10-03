@@ -113,6 +113,16 @@ class WatchlistEntry(Base):
     )
 
 
+class TrendsPreferences(Base):
+    """One shared Trends layout for this local application."""
+
+    __tablename__ = "trends_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    chart_range: Mapped[str] = mapped_column(String(3), nullable=False, default="1W")
+
+
 class MarketPriceBar(Base):
     """An immutable raw, consolidated SIP observation for a watched asset."""
 
@@ -201,6 +211,9 @@ class NewsSourceItem(Base):
     excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     candidate_symbols: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    date_status: Mapped[str] = mapped_column(String(48), nullable=False, default="unverified")
+    published_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -222,9 +235,12 @@ class NewsStory(Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False, default="unclear")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    merged_into_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class NewsStorySource(Base):
@@ -273,6 +289,26 @@ class NewsSyncState(Base):
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_outcome: Mapped[str | None] = mapped_column(String(24), nullable=True)
+
+
+class NewsCollectionRun(Base):
+    """Outcome of one scheduled or manual watchlist news collection."""
+
+    __tablename__ = "news_collection_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempted_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_source_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_card_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    failed_sources: Mapped[list] = mapped_column(JSON, nullable=False)
+    skipped_sources: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
 class NewsAiDailyUsage(Base):

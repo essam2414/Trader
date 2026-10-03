@@ -81,6 +81,27 @@ def test_one_day_chart_outputs_fifteen_minute_iex_tail_closes():
     assert chart.provisional_iex_bars[0].close == iex_bars[-1].close
 
 
+def test_one_day_chart_shows_last_available_trading_day_on_sunday():
+    sunday = datetime(2026, 9, 27, 16, tzinfo=timezone.utc)
+    thursday = historical_bar(datetime(2026, 9, 24, 19, 30, tzinfo=timezone.utc), Decimal("99"))
+    friday = [
+        historical_bar(datetime(2026, 9, 25, 14, 30, tzinfo=timezone.utc), Decimal("100")),
+        historical_bar(datetime(2026, 9, 25, 19, 30, tzinfo=timezone.utc), Decimal("101")),
+    ]
+
+    class WindowedClient(RecordingMarketDataClient):
+        def get_historical_bars(self, symbol, start, end, timeframe, adjustment):
+            bars = super().get_historical_bars(symbol, start, end, timeframe, adjustment)
+            return [bar for bar in bars if start <= bar.starts_at <= end]
+
+    sip_client = WindowedClient(bars=[thursday, *friday])
+    source = AlpacaChartDataSource(sip_client, RecordingMarketDataClient(bars=[]))
+
+    chart = source.load_chart(watchlist_entry(), CHART_RANGES["1D"], sunday)
+
+    assert [bar.starts_at for bar in chart.canonical_bars] == [bar.starts_at for bar in friday]
+
+
 def test_max_chart_requests_five_year_history_and_returns_monthly_bars():
     sip_client = RecordingMarketDataClient()
     iex_client = RecordingMarketDataClient()

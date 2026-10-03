@@ -133,6 +133,7 @@ def test_news_and_events_status_use_separate_collection_times(client, db_session
     db_session.add_all(
         [
             NewsSyncState(source_key="sec", last_success_at=datetime(2026, 9, 25, 8, tzinfo=timezone.utc)),
+            NewsSyncState(source_key="gdelt:rate_limit", last_error="HTTP 429 provider cooldown"),
             NewsSyncState(
                 source_key="events:fed",
                 last_success_at=datetime(2026, 9, 24, 7, tzinfo=timezone.utc),
@@ -155,12 +156,55 @@ def test_news_and_events_status_use_separate_collection_times(client, db_session
     assert "private-value" not in events.text
 
 
+def test_news_status_explains_pending_summary_retry(client, db_session):
+    now = datetime(2026, 9, 27, 15, tzinfo=timezone.utc)
+    db_session.add(
+        NewsStory(
+            id=42,
+            headline="Acme wins contract",
+            short_summary="",
+            detail_summary="",
+            relevance_reason="",
+            key_facts=[],
+            unknowns=[],
+            category="deal",
+            direction="unclear",
+            status="pending",
+            first_seen_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.add(
+        NewsSyncState(
+            source_key="analysis:42",
+            last_attempt_at=now,
+            last_error="AI response did not complete",
+            next_attempt_at=now.replace(hour=16),
+        )
+    )
+    db_session.commit()
+
+    result = client.get("/api/news/status", headers={"Authorization": f"Bearer {settings.dashboard_api_key}"})
+
+    assert result.status_code == 200
+    assert result.json()["pendingSummaries"] == 1
+    assert result.json()["pendingSummaryIssues"] == [
+        {
+            "storyId": 42,
+            "headline": "Acme wins contract",
+            "reason": "AI response did not complete",
+            "nextRetryAt": "2026-09-27T16:00:00Z",
+        }
+    ]
+    assert result.json()["failedSources"] == []
+
+
 def test_manual_news_refresh_only_runs_news_job(client, monkeypatch):
     from app.routers import news as news_router
 
     monkeypatch.setattr(settings, "news_enabled", True)
     calls = []
-    monkeypatch.setattr(news_router, "run_news_job", lambda: calls.append("news") or {"sec": 2})
+    monkeypatch.setattr(news_router, "run_news_job", lambda *, force=False: calls.append(force) or {"sec": 2})
     monkeypatch.setattr(news_router, "run_events_job", lambda: calls.append("events") or {})
     headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
 
@@ -168,5 +212,5 @@ def test_manual_news_refresh_only_runs_news_job(client, monkeypatch):
 
     assert result.status_code == 200
     assert result.json()["refreshedSources"] == 1
-    assert result.json()["refreshedStories"] == 2
-    assert calls == ["news"]
+    assert result.json()["refreshedStories"] == 0
+    assert calls == [True]

@@ -24,7 +24,14 @@ from .routers.market_session import router as market_session_router
 from .routers.news import router as news_router
 from .routers.portfolio import router as portfolio_router
 from .routers.watchlist import router as watchlist_router
-from .scheduler import news_jobs_due, run_events_job, run_history_sync_job, run_news_job, run_snapshot_job
+from .scheduler import (
+    news_jobs_due,
+    run_events_job,
+    run_history_sync_job,
+    run_news_job,
+    run_pending_news_job,
+    run_snapshot_job,
+)
 from .services.chart_data import AlpacaChartDataSource
 from .services.portfolio_current import PortfolioCurrentCache
 from .trading212 import Trading212Client
@@ -91,6 +98,15 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_history_sync_job, "interval", minutes=settings.history_sync_interval_minutes)
     if settings.news_enabled:
         eastern = ZoneInfo("America/New_York")
+        scheduler.add_job(
+            run_pending_news_job,
+            "interval",
+            minutes=5,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
+            id="news_pending_summaries",
+            max_instances=1,
+            coalesce=True,
+        )
         scheduler.add_job(
             run_news_job,
             CronTrigger(

@@ -5,10 +5,10 @@ API response shapes and the stored PortfolioSnapshot rows, forming the
 frontend-facing JSON contract for the portfolio router.
 """
 
-from datetime import datetime
-from typing import Literal
+from datetime import date, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CashBreakdown(BaseModel):
@@ -181,6 +181,26 @@ class StockChartOut(BaseModel):
     provisionalIexBars: list[StockChartBarOut]
 
 
+class TrendsPreferencesUpdate(BaseModel):
+    assetIds: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(max_length=50)
+    range: Literal["1W", "1M", "3M", "1Y", "MAX"]
+
+
+class TrendsPreferencesOut(TrendsPreferencesUpdate):
+    initialized: bool
+
+
+class TrendRankOut(BaseModel):
+    assetId: str
+    symbol: str
+    status: Literal["ready", "insufficient_history", "unavailable"]
+    score: float | None
+    weekTrendPercent: float | None
+    monthRecoveryPercent: float | None
+    risingSessions: int | None
+    asOf: datetime | None
+
+
 class MarketSessionOut(BaseModel):
     phase: Literal["pre_market", "regular", "after_hours", "overnight", "closed"]
     asOf: datetime
@@ -199,6 +219,8 @@ class CatalystCardOut(BaseModel):
     direction: Literal["upside", "downside", "unclear"]
     status: str
     releasedAt: datetime | None
+    releaseDatePrecision: Literal["minute", "date"] | None = None
+    eventDate: date | None = None
     firstSeenAt: datetime
     updatedAt: datetime
 
@@ -208,6 +230,9 @@ class CatalystSourceOut(BaseModel):
     provider: str
     url: str
     publishedAt: datetime | None
+    dateStatus: str = "unverified"
+    datePrecision: Literal["minute", "date"] | None = None
+    eventDate: date | None = None
 
 
 class CatalystDetailOut(CatalystCardOut):
@@ -223,11 +248,31 @@ class SourceErrorOut(BaseModel):
     message: str
 
 
+class NewsRunOut(BaseModel):
+    startedAt: datetime
+    attempted: int
+    succeeded: int
+    failed: int
+    skipped: int
+    newSourceItems: int | None = None
+    newCards: int | None = None
+
+
+class PendingSummaryIssueOut(BaseModel):
+    storyId: int
+    headline: str
+    reason: str
+    nextRetryAt: datetime | None
+
+
 class NewsStatusOut(BaseModel):
     lastSuccessfulRunAt: datetime | None
+    lastAttemptAt: datetime | None = None
     failedSources: list[str]
     sourceErrors: list[SourceErrorOut]
     pendingSummaries: int
+    pendingSummaryIssues: list[PendingSummaryIssueOut]
+    lastRun: NewsRunOut | None = None
 
 
 class MarketEventOut(BaseModel):

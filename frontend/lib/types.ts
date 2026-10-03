@@ -165,6 +165,12 @@ export interface StockChart {
   provisionalIexBars: StockChartBar[];
 }
 
+export interface TrendsPreferences {
+  assetIds: string[];
+  range: Exclude<ChartRange, "1D">;
+  initialized: boolean;
+}
+
 export interface TrendRank {
   assetId: string;
   symbol: string;
@@ -196,6 +202,8 @@ export interface CatalystCard {
   direction: "upside" | "downside" | "unclear";
   status: "ready" | "pending";
   releasedAt: string | null;
+  releaseDatePrecision?: "minute" | "date" | null;
+  eventDate?: string | null;
   firstSeenAt: string;
   updatedAt: string;
 }
@@ -210,14 +218,20 @@ export interface CatalystDetail extends CatalystCard {
     provider: string;
     url: string;
     publishedAt: string | null;
+    dateStatus: string;
+    datePrecision?: "minute" | "date" | null;
+    eventDate?: string | null;
   }[];
 }
 
 export interface NewsStatus {
   lastSuccessfulRunAt: string | null;
+  lastAttemptAt: string | null;
+  lastRun?: { startedAt: string; attempted: number; succeeded: number; failed: number; skipped: number; newSourceItems?: number | null; newCards?: number | null } | null;
   failedSources: string[];
   sourceErrors: SourceError[];
   pendingSummaries: number;
+  pendingSummaryIssues: { storyId: number; headline: string; reason: string; nextRetryAt: string | null }[];
 }
 
 export interface SourceError {

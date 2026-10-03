@@ -1,6 +1,7 @@
 """Persistent UTC-day cap for this app's OpenAI news traffic."""
 
 from datetime import date, datetime, timezone
+from threading import Lock
 from typing import Callable
 
 from sqlalchemy import text
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import NewsAiDailyUsage
+
+_reservation_lock = Lock()
 
 
 class DailyNewsTokenBudget:
@@ -24,7 +27,7 @@ class DailyNewsTokenBudget:
         if estimate <= 0 or estimate > self.limit:
             return None
         day = day or datetime.now(timezone.utc).date()
-        with self.session_factory() as db, db.begin():
+        with _reservation_lock, self.session_factory() as db, db.begin():
             if db.bind is not None and db.bind.dialect.name == "postgresql":
                 db.execute(text("SELECT pg_advisory_xact_lock(20260925)"))
             usage = db.get(NewsAiDailyUsage, day)
@@ -41,7 +44,7 @@ class DailyNewsTokenBudget:
     def settle(self, day: date, estimate: int, actual: int | None) -> None:
         # Unknown usage counts at the full reservation, including ambiguous timeouts.
         charged = estimate if actual is None else max(0, actual)
-        with self.session_factory() as db, db.begin():
+        with _reservation_lock, self.session_factory() as db, db.begin():
             if db.bind is not None and db.bind.dialect.name == "postgresql":
                 db.execute(text("SELECT pg_advisory_xact_lock(20260925)"))
             usage = db.get(NewsAiDailyUsage, day)

@@ -4,30 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { StockPriceChart, type ChartLiveState } from "./StockPriceChart";
 import { conciseStockName } from "./WatchlistItem";
-import type { ChartRange, StockChartBar, TrendRank, WatchlistEntry, WatchlistPositionPrice } from "../lib/types";
+import type { StockChartBar, TrendRank, WatchlistEntry, WatchlistPositionPrice } from "../lib/types";
+import { TREND_RANGES, useTrendsPreferences } from "../lib/useTrendsPreferences";
 
-const RANGES: ChartRange[] = ["1W", "1M", "3M", "1Y", "MAX"];
-const DEFAULT_RANGE: ChartRange = "1W";
-const STORAGE_KEY = "trader.trends.v1";
+export { readSavedTrends } from "../lib/useTrendsPreferences";
 
-type SavedTrends = { assetIds: string[]; range: ChartRange };
 type LiveSnapshot = { symbol: string; bars?: StockChartBar[]; latestTrade?: { price: number } };
 type LiveBar = StockChartBar & { symbol: string };
-
-export function readSavedTrends(value: string | null): SavedTrends {
-  if (!value) return { assetIds: [], range: DEFAULT_RANGE };
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object") return { assetIds: [], range: DEFAULT_RANGE };
-    const candidate = parsed as Partial<SavedTrends>;
-    const assetIds = Array.isArray(candidate.assetIds)
-      ? [...new Set(candidate.assetIds.filter((id): id is string => typeof id === "string" && id.length > 0))]
-      : [];
-    return { assetIds, range: RANGES.includes(candidate.range as ChartRange) ? candidate.range! : DEFAULT_RANGE };
-  } catch {
-    return { assetIds: [], range: DEFAULT_RANGE };
-  }
-}
 
 export function moveSelectedAsset(ids: string[], assetId: string, targetId: string): string[] {
   const from = ids.indexOf(assetId);
@@ -46,9 +29,7 @@ function upsertBar(bars: StockChartBar[], next: StockChartBar): StockChartBar[] 
 
 export function TrendsPage() {
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [range, setRange] = useState<ChartRange>(DEFAULT_RANGE);
-  const [hydrated, setHydrated] = useState(false);
+  const { selectedIds, setSelectedIds, range, setRange, hydrated, loadError, saveError, saving, retryLoad, retrySave } = useTrendsPreferences();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [mode, setMode] = useState<"default" | "reorder" | "remove">("default");
@@ -69,16 +50,6 @@ export function TrendsPage() {
     selectedIdsRef.current = selectedIds;
   }, [selectedIds]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const saved = readSavedTrends(window.localStorage.getItem(STORAGE_KEY));
-      setSelectedIds(saved.assetIds);
-      setRange(saved.range);
-      setHydrated(true);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const loadWatchlist = useCallback(async (signal?: AbortSignal) => {
     try {
       const response = await fetch("/api/watchlist", { cache: "no-store", signal });
@@ -92,7 +63,7 @@ export function TrendsPage() {
     } catch {
       if (!signal?.aborted) setStatus("error");
     }
-  }, []);
+  }, [setSelectedIds]);
 
   const loadPurchasePrices = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -125,11 +96,6 @@ export function TrendsPage() {
       document.removeEventListener("visibilitychange", refreshOnReturn);
     };
   }, [hydrated, loadPurchasePrices, loadWatchlist]);
-
-  useEffect(() => {
-    if (!hydrated || status !== "ready") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ assetIds: selectedIds, range }));
-  }, [hydrated, status, selectedIds, range]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -285,13 +251,13 @@ export function TrendsPage() {
         <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center justify-between gap-4 px-6 pb-5 pt-8 xl:px-8">
           <div className="flex flex-wrap items-center gap-2">
             <nav aria-label="Trends chart range" className="flex flex-wrap items-center gap-1 rounded-xl border border-neutral-800 bg-neutral-900/50 p-1">
-              {RANGES.map((option) => <button key={option} type="button" aria-pressed={range === option} onClick={() => setRange(option)} className={`min-w-12 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${range === option ? "bg-neutral-200 text-neutral-950" : "text-neutral-400 hover:bg-neutral-800 hover:text-white"}`}>{option}</button>)}
+              {TREND_RANGES.map((option) => <button key={option} type="button" disabled={!hydrated || status !== "ready"} aria-pressed={range === option} onClick={() => setRange(option)} className={`min-w-12 rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40 ${range === option ? "bg-neutral-200 text-neutral-950" : "text-neutral-400 hover:bg-neutral-800 hover:text-white"}`}>{option}</button>)}
             </nav>
             <button type="button" onClick={() => void rankSelected()} disabled={ranking || selectedEntries.length < 2 || status !== "ready"} className="rounded-lg border border-sky-500/50 px-3 py-2 text-sm font-semibold text-sky-300 transition hover:bg-sky-500/10 disabled:cursor-not-allowed disabled:opacity-40">{ranking ? "Ranking…" : "Trend"}</button>
           </div>
           <div className="flex items-center gap-2">
             <div ref={pickerRef} className="relative">
-              <button type="button" aria-expanded={pickerOpen} aria-controls="trends-stock-picker" onClick={() => setPickerOpen((open) => !open)} disabled={ranking} className="rounded-lg border border-neutral-700 px-3 py-2 text-sm font-medium text-neutral-100 transition hover:bg-neutral-800 disabled:opacity-40">Add stocks</button>
+              <button type="button" aria-expanded={pickerOpen} aria-controls="trends-stock-picker" onClick={() => setPickerOpen((open) => !open)} disabled={ranking || !hydrated || status !== "ready"} className="rounded-lg border border-neutral-700 px-3 py-2 text-sm font-medium text-neutral-100 transition hover:bg-neutral-800 disabled:opacity-40">Add stocks</button>
               {pickerOpen && <div id="trends-stock-picker" className="absolute right-0 top-full z-30 mt-2 max-h-80 w-72 overflow-y-auto rounded-xl border border-neutral-700 bg-[#171717] p-2 shadow-xl shadow-black/50">
                 <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Watchlist stocks</p>
                 {entries.length === 0 ? <p className="px-2 py-3 text-sm text-neutral-400">Your watchlist is empty.</p> : entries.map((entry) => <label key={entry.assetId} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-neutral-800">
@@ -306,11 +272,14 @@ export function TrendsPage() {
         </div>
       </div>
       <div className="mx-auto w-full max-w-[1440px] px-6 pb-8 xl:px-8">
+      {loadError && <div role="alert" className="mb-5 flex items-center gap-4 rounded-xl border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">{loadError} <button type="button" onClick={retryLoad} className="underline">Retry</button></div>}
+      {saveError && <div role="alert" className="mb-5 flex items-center gap-4 rounded-xl border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">{saveError} <button type="button" onClick={retrySave} disabled={saving} className="underline disabled:opacity-40">Retry save</button></div>}
+      {saving && <p role="status" className="mb-4 text-xs text-neutral-500">Saving Trends layout…</p>}
       {status === "error" && <div role="alert" className="mb-5 flex items-center gap-4 rounded-xl border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">Watchlist unavailable. <button type="button" onClick={() => void loadWatchlist()} className="underline">Retry</button></div>}
       {trendError && <p role="alert" className="mb-4 text-sm text-amber-300">{trendError}</p>}
       {trendMessage && <p role="status" className="mb-4 text-sm text-neutral-400">{trendMessage} Scores use delayed regular-session prices.</p>}
       {mode === "reorder" && <p className="mb-4 text-sm text-neutral-400">Drag a handle to rearrange charts. Use arrow keys on a handle to move it with the keyboard.</p>}
-      {status === "loading" ? <p className="py-16 text-center text-neutral-500">Loading watchlist…</p> : selectedEntries.length === 0 ? <div className="rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-6 py-20 text-center">
+      {loadError ? null : status === "loading" ? <p className="py-16 text-center text-neutral-500">Loading Trends…</p> : selectedEntries.length === 0 ? <div className="rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-6 py-20 text-center">
         <h2 className="text-lg font-medium text-neutral-200">No charts selected</h2>
         <p className="mt-2 text-sm text-neutral-500">Choose stocks from your watchlist to compare them here.</p>
         {entries.length === 0 && <Link href="/dashboard" className="mt-4 inline-block text-sm text-sky-400 hover:underline">Go to Dashboard to add stocks</Link>}

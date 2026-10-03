@@ -32,6 +32,9 @@ from ..schemas import (
     SparklinePoint,
     StockChartBarOut,
     StockChartOut,
+    TrendRankOut,
+    TrendsPreferencesOut,
+    TrendsPreferencesUpdate,
     WatchlistAdd,
     WatchlistEntryOut,
     WatchlistOrderUpdate,
@@ -40,6 +43,8 @@ from ..schemas import (
     WatchlistSearchResult,
 )
 from ..services.chart_data import CHART_ADJUSTMENT, CHART_RANGES, ChartDataSource, session_for
+from ..services.trend_ranking import TREND_CHART_RANGE, calculate_trend, trend_sort_key
+from ..services.trends_preferences import load_preferences, save_preferences
 from ..services.watchlist import (
     WatchlistLimitError,
     add_entry,
@@ -475,6 +480,76 @@ def get_watchlist_position_price(
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise HTTPException(status_code=502, detail="Could not load open position") from exc
     return WatchlistPositionPriceOut(purchasePrice=price, purchasePriceCurrency=currency)
+
+
+@router.get("/watchlist/trends/preferences", response_model=TrendsPreferencesOut)
+def get_trends_preferences(db: Session = Depends(get_db)) -> TrendsPreferencesOut:
+    return load_preferences(db)
+
+
+@router.put("/watchlist/trends/preferences", response_model=TrendsPreferencesOut)
+def update_trends_preferences(
+    update: TrendsPreferencesUpdate,
+    initialize_only: bool = Query(default=False, alias="initializeOnly"),
+    db: Session = Depends(get_db),
+) -> TrendsPreferencesOut:
+    try:
+        return save_preferences(db, update, initialize_only=initialize_only)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/watchlist/trends/rank", response_model=list[TrendRankOut])
+def rank_watchlist_trends(
+    asset_ids: str = Query(alias="assetIds", min_length=1),
+    db: Session = Depends(get_db),
+    chart_data_source: ChartDataSource | None = Depends(get_chart_data_source),
+) -> list[TrendRankOut]:
+    """Rank selected watched stocks only when this read-only route is requested."""
+    ids = asset_ids.split(",")
+    if len(ids) > 50 or len(set(ids)) != len(ids) or any(not item or len(item) > 36 for item in ids):
+        raise HTTPException(status_code=400, detail="Invalid trend selection")
+    if chart_data_source is None:
+        raise HTTPException(status_code=503, detail="Alpaca chart data is not configured")
+
+    entries = db.query(WatchlistEntry).filter(WatchlistEntry.alpaca_asset_id.in_(ids)).all()
+    by_id = {entry.alpaca_asset_id: entry for entry in entries}
+    if len(by_id) != len(ids):
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+
+    now = datetime.now(timezone.utc)
+    ranked = []
+    for index, asset_id in enumerate(ids):
+        entry = by_id[asset_id]
+        try:
+            snapshot = chart_data_source.load_chart(
+                entry, TREND_CHART_RANGE, now, include_provisional_iex=False
+            )
+            metrics = calculate_trend(snapshot.canonical_bars, now)
+            status = "ready" if metrics is not None else "insufficient_history"
+        except AlpacaUnavailableError:
+            metrics = None
+            status = "unavailable"
+        ranked.append(
+            (
+                index,
+                metrics,
+                TrendRankOut(
+                    assetId=asset_id,
+                    symbol=entry.symbol,
+                    status=status,
+                    score=metrics.score if metrics else None,
+                    weekTrendPercent=metrics.week_trend_percent if metrics else None,
+                    monthRecoveryPercent=metrics.month_recovery_percent if metrics else None,
+                    risingSessions=metrics.rising_sessions if metrics else None,
+                    asOf=metrics.as_of if metrics else None,
+                ),
+            )
+        )
+    ranked.sort(key=lambda item: trend_sort_key(item[1], item[0]))
+    return [item[2] for item in ranked]
 
 
 @router.get("/watchlist/{asset_id}/chart", response_model=StockChartOut)

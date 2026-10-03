@@ -13,6 +13,7 @@ from ..dependencies import get_db
 from ..models import (
     MarketEvent,
     MarketEventStock,
+    NewsCollectionRun,
     NewsSourceItem,
     NewsStory,
     NewsStorySource,
@@ -29,9 +30,12 @@ from ..schemas import (
     EventStatusOut,
     MarketEventOut,
     NewsRefreshOut,
+    NewsRunOut,
     NewsStatusOut,
+    PendingSummaryIssueOut,
     SourceErrorOut,
 )
+from ..services.news_digest import active_news_source_keys
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
@@ -42,7 +46,8 @@ def _source_errors(states: list[NewsSyncState]) -> list[SourceErrorOut]:
     return [
         SourceErrorOut(
             source=state.source_key,
-            message=_URL_PATTERN.sub("[source URL]", state.last_error),
+            message=_URL_PATTERN.sub("[source URL]", state.last_error)
+            + (f"; retry after {_utc(state.next_attempt_at).isoformat()}" if state.next_attempt_at else ""),
         )
         for state in sorted(states, key=lambda item: item.source_key)
         if state.last_error
@@ -75,6 +80,8 @@ def _card(db: Session, story: NewsStory) -> CatalystCardOut:
         direction=story.direction if story.direction in {"upside", "downside"} else "unclear",
         status=story.status,
         releasedAt=_utc(story.released_at),
+        releaseDatePrecision=story.released_date_precision,
+        eventDate=story.event_date,
         firstSeenAt=_utc(story.first_seen_at),
         updatedAt=_utc(story.updated_at),
     )
@@ -102,13 +109,51 @@ def list_news(
 
 @router.get("/news/status", response_model=NewsStatusOut)
 def news_status(db: Session = Depends(get_db)) -> NewsStatusOut:
-    states = db.query(NewsSyncState).filter(~NewsSyncState.source_key.startswith("events:")).all()
+    active = active_news_source_keys(db.query(WatchlistEntry).all())
+    states = db.query(NewsSyncState).filter(NewsSyncState.source_key.in_(active)).all()
     successes = [state.last_success_at for state in states if state.last_success_at]
+    attempts = [state.last_attempt_at for state in states if state.last_attempt_at]
+    run = (
+        db.query(NewsCollectionRun)
+        .order_by(NewsCollectionRun.started_at.desc(), NewsCollectionRun.id.desc())
+        .first()
+    )
+    pending = db.query(NewsStory).filter_by(status="pending").all()
+    pending_by_id = {story.id: story for story in pending}
+    analysis_states = db.query(NewsSyncState).filter(NewsSyncState.source_key.startswith("analysis:")).all()
+    summary_issues = []
+    for state in analysis_states:
+        try:
+            story = pending_by_id.get(int(state.source_key.removeprefix("analysis:")))
+        except ValueError:
+            continue
+        if story and state.last_error:
+            summary_issues.append(
+                PendingSummaryIssueOut(
+                    storyId=story.id,
+                    headline=story.headline,
+                    reason=state.last_error,
+                    nextRetryAt=_utc(state.next_attempt_at),
+                )
+            )
     return NewsStatusOut(
         lastSuccessfulRunAt=max(_utc(value) for value in successes) if successes else None,
+        lastAttemptAt=max(_utc(value) for value in attempts) if attempts else None,
         failedSources=sorted(state.source_key for state in states if state.last_error),
         sourceErrors=_source_errors(states),
-        pendingSummaries=db.query(NewsStory).filter_by(status="pending").count(),
+        pendingSummaries=len(pending),
+        pendingSummaryIssues=sorted(summary_issues, key=lambda issue: issue.storyId),
+        lastRun=NewsRunOut(
+            startedAt=_utc(run.started_at),
+            attempted=run.attempted_count,
+            succeeded=run.success_count,
+            failed=run.failure_count,
+            skipped=run.skipped_count,
+            newSourceItems=run.new_source_count,
+            newCards=run.new_card_count,
+        )
+        if run
+        else None,
     )
 
 
@@ -117,7 +162,7 @@ def refresh_news(db: Session = Depends(get_db)) -> NewsRefreshOut:
     if not settings.news_enabled:
         raise HTTPException(status_code=503, detail="News collection is disabled")
     started_at = datetime.now(timezone.utc)
-    result = run_news_job()
+    result = run_news_job(force=True)
     if result is None:
         raise HTTPException(status_code=409, detail="News collection is already running")
     failed_sources = sorted(
@@ -133,9 +178,10 @@ def refresh_news(db: Session = Depends(get_db)) -> NewsRefreshOut:
     refreshed_sources = {key: count for key, count in result.items() if key != "pending_retried"}
     if not refreshed_sources:
         raise HTTPException(status_code=502, detail="No news sources could be refreshed")
+    latest_run = db.query(NewsCollectionRun).order_by(NewsCollectionRun.id.desc()).first()
     return NewsRefreshOut(
         refreshedSources=len(refreshed_sources),
-        refreshedStories=sum(refreshed_sources.values()) + result.get("pending_retried", 0),
+        refreshedStories=(latest_run.new_card_count or 0) if latest_run else 0,
         failedSources=failed_sources,
     )
 
@@ -164,6 +210,9 @@ def news_detail(story_id: int, db: Session = Depends(get_db)) -> CatalystDetailO
                 provider=source.provider,
                 url=source.url,
                 publishedAt=_utc(source.published_at),
+                dateStatus=source.date_status,
+                datePrecision=source.published_date_precision,
+                eventDate=source.event_date,
             )
             for source in links
         ],

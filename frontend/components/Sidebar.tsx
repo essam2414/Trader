@@ -124,11 +124,11 @@ function NextEventCard() {
       aria-label="Next event"
       className={`rounded-xl border p-4 ${nextEvent?.category === "earnings" ? "border-orange-700/70 bg-orange-900/60" : "border-neutral-800 bg-neutral-900/50"}`}
     >
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Next event</p>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Next event</p>
       {!hasLoaded ? <div className="mt-3 h-9 animate-pulse rounded-md bg-neutral-800" /> : nextEvent ? <>
-        <h2 className="mt-2 text-sm font-semibold leading-5 text-neutral-100">{nextEvent.title}</h2>
-        <p className="mt-2 text-xs leading-5 text-neutral-400">{eventDateLabel(nextEvent)}</p>
-      </> : <p className="mt-2 text-sm leading-5 text-neutral-500">No upcoming events</p>}
+        <h2 className="mt-2 break-words text-[13px] font-semibold leading-[18px] text-neutral-100">{nextEvent.title}</h2>
+        <p className="mt-2 text-[11px] leading-[17px] text-neutral-400">{eventDateLabel(nextEvent)}</p>
+      </> : <p className="mt-2 text-[13px] leading-[18px] text-neutral-500">No upcoming events</p>}
     </section>
   );
 }

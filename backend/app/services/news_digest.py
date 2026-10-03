@@ -4,33 +4,44 @@ import hashlib
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from email.utils import parsedate_to_datetime
 from typing import Callable
 
 import httpx
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import NewsSourceItem, NewsStory, NewsStorySource, NewsStoryStock, NewsSyncState, WatchlistEntry
+from ..models import (
+    NewsCollectionRun,
+    NewsSourceItem,
+    NewsStory,
+    NewsStorySource,
+    NewsStoryStock,
+    NewsSyncState,
+    WatchlistEntry,
+)
 from .news_ai import Evidence, OpenAINewsAnalyser
+from .news_identity import same_analyst_event
+from .news_reconcile import apply_analyst_merges, plan_analyst_merges, plan_event_merges
 from .news_sources import (
     NewsHttp,
     SourceItem,
     alpaca_items,
-    bloom_energy_items,
     canonical_url,
     company_match,
     configured_feeds,
     finnhub_items,
-    gdelt_exposure_items,
-    gdelt_items,
     rss_items,
     sec_items,
     spglobal_index_items,
 )
+from .news_web_search import OpenAIWebNewsDiscovery
 
 logger = logging.getLogger(__name__)
+WEB_SEARCH_MIN_INTERVAL = timedelta(hours=6)
 
 NEGATIVE = (
     "cuts guidance",
@@ -58,7 +69,7 @@ CATEGORY_WORDS = {
     "earnings": ("earnings", "quarterly results", "revenue", "eps"),
     "guidance": ("guidance", "outlook", "forecast"),
     "deal": ("deal", "contract", "agreement", "partnership", "acquisition", "merger"),
-    "analyst": ("price target", "analyst", "upgrade", "downgrade"),
+    "analyst": ("price target", "analyst", "upgrade", "downgrade", "coverage", "rating", "initiates"),
     "financing": ("offering", "dilution", "form s-3", "form f-3", "form s-1", "form 424b5", "form 424b4"),
     "insider": ("insider sale", "insider selling", "form 4"),
     "regulatory": ("fda", "approval", "lawsuit", "investigation", "recall"),
@@ -68,6 +79,8 @@ CATEGORY_WORDS = {
 CATALYST_WORDS = re.compile(
     r"\b(?:earnings|results|revenue|profit|loss|eps|guidance|outlook|forecast|contract|deal|"
     r"agreement|partnership|acquir(?:e|es|ed|ing)|acquisition|merger|takeover|price target|upgrade|downgrade|"
+    r"initiates? coverage|initiated coverage|starts? coverage|begins? coverage|buy rating|sell rating|"
+    r"initiates?.{0,80}\bat (?:buy|sell|hold)|"
     r"approval|fda|trial|recall|investigation|lawsuit|settlement|index|s&p 500|nasdaq 100|"
     r"sanction|tariff|ceasefire|war|oil supply|oil price|opec|buyback|dividend|offering|"
     r"financing|debt|ceo|cfo|layoff|bankrupt|restatement|trillion|valuation|market cap|"
@@ -93,6 +106,16 @@ def _category(title: str) -> str:
 def _utc(value: datetime) -> datetime:
     """SQLite drops timezone data in tests; all persisted timestamps are UTC."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _better_release_date(
+    candidate: datetime, candidate_precision: str, current: datetime | None, current_precision: str | None
+) -> bool:
+    if current is None:
+        return True
+    if _utc(candidate).date() != _utc(current).date():
+        return _utc(candidate) < _utc(current)
+    return current_precision == "date" and candidate_precision == "minute"
 
 
 def _direction(title: str) -> str:
@@ -128,13 +151,24 @@ def _upsert_source(db: Session, item: SourceItem, now: datetime) -> tuple[NewsSo
     existing = db.query(NewsSourceItem).filter_by(provider=item.provider, source_key=item.key).one_or_none()
     digest = hashlib.sha256(f"{item.title}\n{item.excerpt}".encode()).hexdigest()
     if existing:
-        changed = existing.content_hash != digest
-        if changed:
+        content_changed = existing.content_hash != digest
+        date_found = existing.published_at is None and item.published_at is not None
+        event_date_found = existing.event_date is None and item.event_date is not None
+        if content_changed:
             existing.title = item.title
             existing.excerpt = item.excerpt
             existing.content_hash = digest
+        if date_found:
+            existing.published_at = item.published_at
+            existing.date_status = item.date_status if item.date_status != "unverified" else "verified"
+            existing.published_date_precision = item.published_date_precision
+        elif not existing.published_at and item.date_status != "unverified":
+            existing.date_status = item.date_status
+        if event_date_found:
+            existing.event_date = item.event_date
+        if content_changed or date_found or event_date_found:
             existing.updated_at = now
-        return existing, changed
+        return existing, content_changed or date_found or event_date_found
     record = NewsSourceItem(
         provider=item.provider,
         source_key=item.key,
@@ -143,6 +177,11 @@ def _upsert_source(db: Session, item: SourceItem, now: datetime) -> tuple[NewsSo
         excerpt=item.excerpt,
         candidate_symbols=list(item.symbols),
         published_at=item.published_at,
+        date_status=(item.date_status if item.date_status != "unverified" else "verified")
+        if item.published_at
+        else item.date_status,
+        published_date_precision=item.published_date_precision if item.published_at else None,
+        event_date=item.event_date,
         first_seen_at=now,
         updated_at=None,
         content_hash=digest,
@@ -153,8 +192,14 @@ def _upsert_source(db: Session, item: SourceItem, now: datetime) -> tuple[NewsSo
 
 
 def _linked_story(db: Session, item_id: int) -> NewsStory | None:
-    link = db.query(NewsStorySource).filter_by(source_item_id=item_id).one_or_none()
-    return db.get(NewsStory, link.story_id) if link else None
+    links = db.query(NewsStorySource).filter_by(source_item_id=item_id).all()
+    for link in links:
+        story = db.get(NewsStory, link.story_id)
+        if story and story.status != "merged":
+            return story
+        if story and story.merged_into_story_id:
+            return db.get(NewsStory, story.merged_into_story_id)
+    return None
 
 
 def _candidate_story(
@@ -162,7 +207,11 @@ def _candidate_story(
 ) -> NewsStory | None:
     asset_ids = {entry.alpaca_asset_id for entry in assets}
     cutoff = now - timedelta(days=7)
-    candidates = db.query(NewsStory).filter(NewsStory.first_seen_at >= cutoff).all()
+    candidates = (
+        db.query(NewsStory)
+        .filter(NewsStory.first_seen_at >= cutoff, NewsStory.status.in_(("ready", "pending")))
+        .all()
+    )
     for story in candidates:
         story_assets = {row.alpaca_asset_id for row in db.query(NewsStoryStock).filter_by(story_id=story.id)}
         if not asset_ids.intersection(story_assets):
@@ -171,7 +220,28 @@ def _candidate_story(
         sources = db.query(NewsSourceItem).filter(NewsSourceItem.id.in_(source_ids)).all()
         if any(source.url == item.url for source in sources):
             return story
+        if any(
+            same_analyst_event(
+                item,
+                SourceItem(
+                    source.provider,
+                    source.source_key,
+                    source.url,
+                    source.title,
+                    source.excerpt,
+                    source.published_at,
+                    tuple(source.candidate_symbols),
+                    source.date_status,
+                    source.published_date_precision or "minute",
+                ),
+                assets,
+            )
+            for source in sources
+        ):
+            return story
         if story.category != _category(item.title):
+            continue
+        if story.category == "analyst":
             continue
         if any(
             _story_similarity(item.title, source.title) >= 0.80
@@ -218,6 +288,8 @@ def _analyse_story(
                 source.excerpt,
                 source.published_at,
                 tuple(source.candidate_symbols),
+                source.date_status,
+                source.published_date_precision or "minute",
             ),
         )
         for source in sources
@@ -227,7 +299,8 @@ def _analyse_story(
         [entry for entry in entries if entry.alpaca_asset_id in candidate_ids], evidence, _exposures()
     )
     if result is None:
-        story.status = "pending"
+        if story.status != "ready":
+            story.status = "pending"
         return
     if not result.relevant:
         story.status = "irrelevant"
@@ -282,6 +355,7 @@ def ingest_items(
                 direction=_direction(item.title),
                 status="pending",
                 released_at=item.published_at,
+                released_date_precision=item.published_date_precision if item.published_at else None,
                 first_seen_at=now,
                 updated_at=now,
             )
@@ -289,6 +363,8 @@ def ingest_items(
             db.flush()
         if not db.query(NewsStorySource).filter_by(story_id=story.id, source_item_id=source.id).first():
             db.add(NewsStorySource(story_id=story.id, source_item_id=source.id))
+        if story.event_date is None:
+            story.event_date = item.event_date or source.event_date
         for asset in assets:
             if (
                 not db.query(NewsStoryStock)
@@ -296,13 +372,18 @@ def ingest_items(
                 .first()
             ):
                 db.add(NewsStoryStock(story_id=story.id, alpaca_asset_id=asset.alpaca_asset_id))
-        if item.published_at and (
-            story.released_at is None or _utc(item.published_at) < _utc(story.released_at)
+        if item.published_at and _better_release_date(
+            item.published_at,
+            item.published_date_precision,
+            story.released_at,
+            story.released_date_precision,
         ):
             story.released_at = item.published_at
+            story.released_date_precision = item.published_date_precision
         db.flush()
         if analysis_budget is not None and analysis_budget[0] <= 0:
-            story.status = "pending"
+            if story.status != "ready":
+                story.status = "pending"
         else:
             _analyse_story(db, story, entries, analyser, now)
             if analysis_budget is not None:
@@ -318,27 +399,74 @@ def retry_pending(
     analyser: OpenAINewsAnalyser,
     now: datetime,
     budget: list[int],
+    force: bool = False,
 ) -> int:
     retried = 0
     if budget[0] <= 0:
         return retried
-    for story in (
-        db.query(NewsStory)
-        .filter_by(status="pending")
-        .order_by(NewsStory.first_seen_at.desc())
-        .limit(budget[0])
-    ):
+    for story in db.query(NewsStory).filter_by(status="pending").order_by(NewsStory.first_seen_at):
+        if budget[0] <= 0:
+            break
         if not {entry.alpaca_asset_id for entry in entries}.intersection(
             row.alpaca_asset_id for row in db.query(NewsStoryStock).filter_by(story_id=story.id)
         ):
             continue
+        state_key = f"analysis:{story.id}"
+        state = db.get(NewsSyncState, state_key)
+        if not force and state and state.next_attempt_at and now < _utc(state.next_attempt_at):
+            continue
         _analyse_story(db, story, entries, analyser, now)
+        if story.status == "pending":
+            if state is None:
+                state = NewsSyncState(source_key=state_key)
+                db.add(state)
+            state.last_attempt_at = now
+            state.last_error = (
+                getattr(analyser, "last_failure_reason", None) or "Summary analysis did not complete"
+            )
+            state.last_outcome = "failure"
+            state.next_attempt_at = now + timedelta(minutes=30)
+        elif state is not None:
+            db.delete(state)
         # The next token reservation writes through a separate session. Release this story's
         # transaction first so SQLite does not block every remaining reservation in the batch.
         db.commit()
         budget[0] -= 1
         retried += 1
     return retried
+
+
+def run_pending_analysis(db: Session, analyser: OpenAINewsAnalyser | None = None) -> int:
+    """Finish source-backed summaries without collecting external news again."""
+    analyser = analyser or OpenAINewsAnalyser()
+    if not analyser.available():
+        return 0
+    entries = db.query(WatchlistEntry).all()
+    if not entries:
+        return 0
+    pending_count = db.query(NewsStory).filter_by(status="pending").count()
+    return retry_pending(db, entries, analyser, datetime.now(timezone.utc), [pending_count])
+
+
+def _cooldown_until(error: Exception, now: datetime) -> datetime | None:
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        if status == 403:
+            return now + timedelta(days=1)
+        if status == 429:
+            retry_after = error.response.headers.get("retry-after", "")
+            if retry_after.isdigit():
+                return now + timedelta(seconds=max(60, min(int(retry_after), 3600)))
+            try:
+                retry_time = parsedate_to_datetime(retry_after).astimezone(timezone.utc)
+                return max(now + timedelta(minutes=1), min(retry_time, now + timedelta(hours=1)))
+            except (TypeError, ValueError, OverflowError):
+                return now + timedelta(minutes=30)
+    if isinstance(error, httpx.TimeoutException):
+        return now + timedelta(minutes=15)
+    if isinstance(error, ValueError) and str(error).startswith("OpenAI web search"):
+        return now + timedelta(minutes=30)
+    return None
 
 
 def _record_source_result(db: Session, key: str, now: datetime, error: Exception | None) -> None:
@@ -350,9 +478,37 @@ def _record_source_result(db: Session, key: str, now: datetime, error: Exception
     if error is None:
         state.last_success_at = now
         state.last_error = None
+        state.next_attempt_at = None
+        state.last_outcome = "success"
     else:
         state.last_error = str(error)[:500]
+        state.next_attempt_at = _cooldown_until(error, now)
+        state.last_outcome = "failure"
     db.commit()
+
+
+def active_news_source_keys(entries: list[WatchlistEntry]) -> set[str]:
+    keys = {f"rss:{provider}" for provider in configured_feeds()}
+    keys.update({"sec", "spdji"})
+    for entry in entries:
+        keys.add(f"alpaca:{entry.symbol}")
+        if settings.finnhub_api_key:
+            keys.add(f"finnhub:{entry.symbol}")
+        if (
+            settings.openai_news_enabled
+            and settings.openai_news_web_search_enabled
+            and settings.openai_api_key
+        ):
+            keys.add(f"openai_web:{entry.symbol}")
+    return keys
+
+
+def _source_deferred(state: NewsSyncState | None, now: datetime, force: bool) -> bool:
+    if not state or not state.next_attempt_at or now >= _utc(state.next_attempt_at):
+        return False
+    # Manual refresh bypasses cadence and ordinary retries, but cannot override
+    # a provider's explicit access denial or rate limit.
+    return not force or bool(state.last_error and re.search(r"\b(?:403|429)\b", state.last_error))
 
 
 def run_news_sync(
@@ -360,6 +516,7 @@ def run_news_sync(
     analyser: OpenAINewsAnalyser | None = None,
     now: datetime | None = None,
     http: NewsHttp | None = None,
+    force: bool = False,
 ) -> dict[str, int]:
     now = now or datetime.now(timezone.utc)
     entries = db.query(WatchlistEntry).all()
@@ -368,56 +525,122 @@ def run_news_sync(
     analyser = analyser or OpenAINewsAnalyser()
     owned_http = http is None
     http = http or NewsHttp()
-    successes = [
-        _utc(state.last_success_at)
-        for state in db.query(NewsSyncState).all()
-        if state.last_success_at and not state.source_key.startswith("events:")
-    ]
-    cutoff = (
-        max(now - timedelta(days=7), min(successes) - timedelta(days=1))
-        if successes
-        else now - timedelta(days=7)
-    )
+    # Re-query the full bounded window. Provider feeds can add articles late, and a
+    # successful run from an unrelated source must not advance another source's cursor.
+    cutoff = now - timedelta(days=7)
     results: dict[str, int] = {}
     jobs: dict[str, Callable[[], list[SourceItem]]] = {}
+    failed: list[str] = []
+    skipped: list[str] = []
     try:
+        existing_merges = plan_event_merges(db)
+        if existing_merges:
+            apply_analyst_merges(db, existing_merges, now)
+        existing_analyst_merges = plan_analyst_merges(db)
+        if existing_analyst_merges:
+            apply_analyst_merges(db, existing_analyst_merges, now)
+        ready_before_ids = {story_id for (story_id,) in db.query(NewsStory.id).filter_by(status="ready")}
         watched_symbols = {entry.symbol.upper() for entry in entries}
         for provider, url in configured_feeds().items():
             ir_symbol = provider.removeprefix("ir_").upper() if provider.startswith("ir_") else ""
             symbols = (ir_symbol,) if ir_symbol in watched_symbols else ()
-            jobs[f"rss:{provider}"] = lambda url=url, provider=provider, symbols=symbols: (
-                bloom_energy_items(http, url, symbols, now)
-                if provider == "ir_be"
-                else rss_items(http, url, provider, symbols)
+            jobs[f"rss:{provider}"] = lambda url=url, provider=provider, symbols=symbols: rss_items(
+                http, url, provider, symbols
             )
         if settings.finnhub_api_key:
             for entry in entries:
                 jobs[f"finnhub:{entry.symbol}"] = lambda symbol=entry.symbol: finnhub_items(
                     http, symbol, cutoff, now
                 )
+        for entry in entries:
+            jobs[f"alpaca:{entry.symbol}"] = lambda symbol=entry.symbol: alpaca_items(
+                http, [symbol], cutoff, now
+            )
         jobs.update(
             {
                 "sec": lambda: sec_items(http, entries, cutoff),
                 "spdji": lambda: spglobal_index_items(http, entries, now),
-                "alpaca": lambda: alpaca_items(http, [entry.symbol for entry in entries], cutoff, now),
-                "gdelt": lambda: gdelt_items(http, entries, cutoff, now),
-                "gdelt:exposure": lambda: gdelt_exposure_items(http, entries, _exposures(), cutoff, now),
             }
         )
-        for key, job in jobs.items():
+        web_discovery = OpenAIWebNewsDiscovery()
+
+        def search_web(entry: WatchlistEntry) -> list[SourceItem]:
+            if not owned_http:
+                return web_discovery.search(entry, cutoff, now, http)
+            web_http = NewsHttp()
             try:
-                items = job()
-                results[key] = ingest_items(db, items, entries, analyser, now, [0])
-                _record_source_result(db, key, now, None)
-            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-                db.rollback()
-                logger.warning("News source %s failed: %s", key, exc)
-                _record_source_result(db, key, now, exc)
+                return web_discovery.search(entry, cutoff, now, web_http)
+            finally:
+                web_http.close()
+
+        if web_discovery.available():
+            for entry in entries:
+                key = f"openai_web:{entry.symbol}"
+                state = db.get(NewsSyncState, key)
+                if (
+                    not force
+                    and state
+                    and not state.last_error
+                    and state.last_attempt_at
+                    and now - _utc(state.last_attempt_at) < WEB_SEARCH_MIN_INTERVAL
+                ):
+                    skipped.append(key)
+                    continue
+                jobs[key] = lambda entry=entry: search_web(entry)
+        web_keys = [key for key in jobs if key.startswith("openai_web:")]
+        executor = ThreadPoolExecutor(max_workers=min(4, len(web_keys))) if owned_http and web_keys else None
+        try:
+            web_futures = {
+                key: executor.submit(jobs[key])
+                for key in web_keys
+                if executor and not _source_deferred(db.get(NewsSyncState, key), now, force)
+            }
+            for key, job in jobs.items():
+                state = db.get(NewsSyncState, key)
+                if _source_deferred(state, now, force):
+                    skipped.append(key)
+                    continue
+                try:
+                    items = web_futures[key].result() if key in web_futures else job()
+                    results[key] = ingest_items(db, items, entries, analyser, now, [0])
+                    _record_source_result(db, key, now, None)
+                except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                    db.rollback()
+                    failed.append(key)
+                    logger.warning("News source %s failed: %s", key, exc)
+                    _record_source_result(db, key, now, exc)
+        finally:
+            if executor:
+                executor.shutdown(wait=True)
         pending_count = db.query(NewsStory).filter_by(status="pending").count()
         budget = [
             pending_count if not isinstance(analyser, OpenAINewsAnalyser) or analyser.available() else 0
         ]
-        results["pending_retried"] = retry_pending(db, entries, analyser, now, budget)
+        results["pending_retried"] = retry_pending(db, entries, analyser, now, budget, force=force)
+        new_merges = plan_event_merges(db)
+        if new_merges:
+            apply_analyst_merges(db, new_merges, now)
+        new_analyst_merges = plan_analyst_merges(db)
+        if new_analyst_merges:
+            apply_analyst_merges(db, new_analyst_merges, now)
+        new_source_count = db.query(NewsSourceItem).filter(NewsSourceItem.first_seen_at == now).count()
+        ready_after_ids = {story_id for (story_id,) in db.query(NewsStory.id).filter_by(status="ready")}
+        new_card_count = len(ready_after_ids - ready_before_ids)
+        db.add(
+            NewsCollectionRun(
+                started_at=now,
+                completed_at=datetime.now(timezone.utc),
+                attempted_count=len(results) - 1 + len(failed),
+                success_count=len(results) - 1,
+                failure_count=len(failed),
+                skipped_count=len(skipped),
+                new_source_count=new_source_count,
+                new_card_count=new_card_count,
+                failed_sources=failed,
+                skipped_sources=skipped,
+            )
+        )
+        db.commit()
     finally:
         if owned_http:
             http.close()

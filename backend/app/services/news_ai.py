@@ -116,6 +116,7 @@ class OpenAINewsAnalyser:
         self.budget = budget or DailyNewsTokenBudget(settings.openai_news_daily_token_budget)
         self._disabled = False
         self._retry_after: datetime | None = None
+        self.last_failure_reason: str | None = None
 
     def available(self) -> bool:
         return bool(
@@ -132,7 +133,12 @@ class OpenAINewsAnalyser:
         evidence: list[Evidence],
         exposures: dict[str, list[str]] | None = None,
     ) -> ModelAnalysis | None:
-        if not self.available() or not entries or not evidence:
+        self.last_failure_reason = None
+        if not self.available():
+            self.last_failure_reason = "AI analysis unavailable or temporarily rate limited"
+            return None
+        if not entries or not evidence:
+            self.last_failure_reason = "No watched stock or source evidence available"
             return None
         selected = sorted(
             evidence,
@@ -183,8 +189,10 @@ class OpenAINewsAnalyser:
         try:
             day = self.budget.reserve(estimate)
         except SQLAlchemyError:
+            self.last_failure_reason = "AI token budget store unavailable"
             return None
         if day is None:
+            self.last_failure_reason = "Daily AI token budget exhausted"
             return None
         actual: int | None = None
         try:
@@ -210,6 +218,10 @@ class OpenAINewsAnalyser:
             if isinstance(usage.get("total_tokens"), int):
                 actual = usage["total_tokens"]
             if body.get("status") != "completed":
+                reason = (body.get("incomplete_details") or {}).get("reason")
+                self.last_failure_reason = (
+                    f"AI response incomplete: {reason}" if reason else "AI response did not complete"
+                )
                 return None
             content = next(
                 part["text"]
@@ -219,7 +231,13 @@ class OpenAINewsAnalyser:
                 if part.get("type") == "output_text"
             )
             result = ModelAnalysis.model_validate_json(content)
-        except (httpx.HTTPError, ValueError, KeyError, StopIteration, ValidationError):
+        except (httpx.HTTPError, ValueError, KeyError, StopIteration, ValidationError) as exc:
+            if isinstance(exc, httpx.HTTPStatusError):
+                self.last_failure_reason = f"AI request returned HTTP {exc.response.status_code}"
+            elif isinstance(exc, httpx.HTTPError):
+                self.last_failure_reason = "AI request failed or timed out"
+            else:
+                self.last_failure_reason = "AI response could not be validated"
             return None
         finally:
             try:
@@ -231,8 +249,10 @@ class OpenAINewsAnalyser:
         valid_ids = {entry.alpaca_asset_id for entry in entries}
         source_ids = {item.item_id for item in selected}
         if not set(result.affectedAssetIds) <= valid_ids or not set(result.supportingSourceIds) <= source_ids:
+            self.last_failure_reason = "AI response referenced unsupported stock or source"
             return None
         if result.relevant and (not result.affectedAssetIds or not result.supportingSourceIds):
+            self.last_failure_reason = "AI response omitted supporting stock or source"
             return None
         sourced_text = " ".join(
             f"{item.item.title} {item.item.excerpt} "
@@ -250,5 +270,6 @@ class OpenAINewsAnalyser:
             ]
         )
         if _numbers(generated) - _numbers(sourced_text):
+            self.last_failure_reason = "AI response contained numbers absent from sources"
             return None
         return result

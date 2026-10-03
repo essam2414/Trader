@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrendsPage, moveSelectedAsset, readSavedTrends } from "../TrendsPage";
 import type { ChartRange, WatchlistEntry } from "../../lib/types";
@@ -9,6 +9,23 @@ vi.mock("../StockPriceChart", () => ({
 }));
 
 const entries = [entry("asset-aapl", "AAPL"), entry("asset-msft", "MSFT"), entry("asset-now", "NOW")];
+const preferencesPath = "/api/watchlist/trends/preferences";
+let savedPreferences: { assetIds: string[]; range: ChartRange; initialized: boolean };
+
+async function respond(input: string, init?: RequestInit) {
+  if (input.startsWith(preferencesPath)) {
+    if (init?.method === "PUT" && (!input.includes("initializeOnly") || !savedPreferences.initialized)) {
+      savedPreferences = { ...JSON.parse(init.body as string), initialized: true };
+    }
+    return { ok: true, json: async () => structuredClone(savedPreferences) };
+  }
+  return {
+    ok: true,
+    json: async () => input === "/api/watchlist/positions"
+      ? { "asset-aapl": { purchasePrice: 150.25, purchasePriceCurrency: "USD" } }
+      : entries,
+  };
+}
 
 function entry(assetId: string, symbol: string): WatchlistEntry {
   return {
@@ -35,14 +52,10 @@ class FakeEventSource {
 describe("TrendsPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    savedPreferences = { assetIds: [], range: "1W", initialized: false };
     FakeEventSource.sources = [];
     vi.stubGlobal("EventSource", FakeEventSource);
-    vi.stubGlobal("fetch", vi.fn(async (input: string) => ({
-      ok: true,
-      json: async () => input === "/api/watchlist/positions"
-        ? { "asset-aapl": { purchasePrice: 150.25, purchasePriceCurrency: "USD" } }
-        : entries,
-    })));
+    vi.stubGlobal("fetch", vi.fn(respond));
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -71,8 +84,8 @@ describe("TrendsPage", () => {
     FakeEventSource.sources.at(-1)!.emit("trade", { symbol: "AAPL", price: 123.45 });
     await waitFor(() => expect(screen.getAllByTestId("trend-chart")[0]).toHaveAttribute("data-live-price", "123.45"));
     expect(screen.getAllByTestId("trend-chart")[1]).toHaveAttribute("data-live-price", "");
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("trader.trends.v1")!)).toEqual({
-      assetIds: ["asset-aapl", "asset-msft"], range: "3M",
+    await waitFor(() => expect(savedPreferences).toEqual({
+      assetIds: ["asset-aapl", "asset-msft"], range: "3M", initialized: true,
     }));
   });
 
@@ -94,20 +107,17 @@ describe("TrendsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove AAPL chart" }));
     expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-msft"]);
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("asset-aapl"), expect.objectContaining({ method: "DELETE" }));
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("trader.trends.v1")!).assetIds).toEqual(["asset-msft"]));
+    await waitFor(() => expect(savedPreferences.assetIds).toEqual(["asset-msft"]));
   });
 
   it("ranks only on a Trend click and saves the returned order", async () => {
     window.localStorage.setItem("trader.trends.v1", JSON.stringify({ assetIds: ["asset-aapl", "asset-msft"], range: "1W" }));
-    const fetchMock = vi.fn(async (input: string) => ({
-      ok: true,
-      json: async () => input.startsWith("/api/watchlist/trends?")
-        ? [
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => input.startsWith("/api/watchlist/trends?")
+      ? { ok: true, json: async () => [
           { assetId: "asset-msft", symbol: "MSFT", status: "ready", score: 82, weekTrendPercent: 4, monthRecoveryPercent: 12, risingSessions: 3, asOf: "2026-09-25T19:30:00Z" },
           { assetId: "asset-aapl", symbol: "AAPL", status: "ready", score: 51, weekTrendPercent: 2, monthRecoveryPercent: 5, risingSessions: 2, asOf: "2026-09-25T19:30:00Z" },
-        ]
-        : input === "/api/watchlist/positions" ? {} : entries,
-    }));
+        ] }
+      : respond(input, init));
     vi.stubGlobal("fetch", fetchMock);
     render(<TrendsPage />);
     await waitFor(() => expect(screen.getAllByTestId("trend-chart")).toHaveLength(2));
@@ -119,21 +129,107 @@ describe("TrendsPage", () => {
     await waitFor(() => expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-msft", "asset-aapl"]));
     expect(fetchMock.mock.calls.filter(([url]) => url.startsWith("/api/watchlist/trends?"))).toHaveLength(1);
     expect(screen.getByText("Trend #1 · 82/100")).toBeInTheDocument();
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("trader.trends.v1")!).assetIds).toEqual(["asset-msft", "asset-aapl"]));
+    await waitFor(() => expect(savedPreferences.assetIds).toEqual(["asset-msft", "asset-aapl"]));
   });
 
   it("keeps chart order when trend history cannot be loaded", async () => {
     window.localStorage.setItem("trader.trends.v1", JSON.stringify({ assetIds: ["asset-aapl", "asset-msft"], range: "1W" }));
-    vi.stubGlobal("fetch", vi.fn(async (input: string) => ({
-      ok: !input.startsWith("/api/watchlist/trends?"),
-      json: async () => input === "/api/watchlist/positions" ? {} : entries,
-    })));
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => input.startsWith("/api/watchlist/trends?")
+      ? { ok: false, json: async () => ({}) }
+      : respond(input, init)));
     render(<TrendsPage />);
     await waitFor(() => expect(screen.getAllByTestId("trend-chart")).toHaveLength(2));
 
     fireEvent.click(screen.getByRole("button", { name: "Trend" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Your chart order was kept");
     expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId)).toEqual(["asset-aapl", "asset-msft"]);
+  });
+
+  it("restores the database layout after browser storage is cleared", async () => {
+    savedPreferences = { assetIds: ["asset-msft", "asset-aapl"], range: "3M", initialized: true };
+    const first = render(<TrendsPage />);
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId))
+      .toEqual(["asset-msft", "asset-aapl"]));
+    first.unmount();
+    window.localStorage.clear();
+    render(<TrendsPage />);
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId))
+      .toEqual(["asset-msft", "asset-aapl"]));
+    expect(screen.getByRole("button", { name: "3M" })).toHaveAttribute("aria-pressed", "true");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("does not let stale browser storage overwrite an intentionally empty database layout", async () => {
+    savedPreferences = { assetIds: [], range: "1M", initialized: true };
+    window.localStorage.setItem("trader.trends.v1", JSON.stringify({ assetIds: ["asset-aapl"], range: "1W" }));
+    render(<TrendsPage />);
+    expect(await screen.findByText("No charts selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1M" })).toHaveAttribute("aria-pressed", "true");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("does not save an empty layout when loading saved preferences fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => input === preferencesPath
+      ? { ok: false, json: async () => ({}) }
+      : respond(input, init)));
+    render(<TrendsPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved Trends layout could not be loaded");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    expect(screen.getByRole("button", { name: "Add stocks" })).toBeDisabled();
+  });
+
+  it("retries failed saves without losing the current chart selection", async () => {
+    let failWrites = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => input === preferencesPath && init?.method === "PUT" && failWrites
+      ? { ok: false, json: async () => ({}) }
+      : respond(input, init)));
+    render(<TrendsPage />);
+    await screen.findByText("No charts selected");
+    fireEvent.click(screen.getByRole("button", { name: "Add stocks" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /AAPL/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Trends changes could not be saved");
+    expect(screen.getByTestId("trend-chart")).toHaveAttribute("data-asset-id", "asset-aapl");
+    expect(savedPreferences.assetIds).toEqual([]);
+    failWrites = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry save" }));
+    await waitFor(() => expect(savedPreferences.assetIds).toEqual(["asset-aapl"]));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("serializes rapid reorders including a return to the original order during a save", async () => {
+    savedPreferences = { assetIds: ["asset-aapl", "asset-msft"], range: "1W", initialized: true };
+    let releaseFirst!: () => void;
+    const firstWrite = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let writes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === preferencesPath && init?.method === "PUT") {
+        writes += 1;
+        if (writes === 1) await firstWrite;
+      }
+      return respond(input, init);
+    }));
+    render(<TrendsPage />);
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Reorder" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Move AAPL chart" }), { key: "ArrowRight" });
+    await waitFor(() => expect(writes).toBe(1));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Move AAPL chart" }), { key: "ArrowLeft" });
+    expect(writes).toBe(1);
+    await act(async () => { releaseFirst(); await firstWrite; });
+    await waitFor(() => expect(writes).toBe(2));
+    await waitFor(() => expect(savedPreferences.assetIds).toEqual(["asset-aapl", "asset-msft"]));
+  });
+
+  it("loads changes saved from another browser when returning to the tab", async () => {
+    savedPreferences = { assetIds: ["asset-aapl"], range: "1W", initialized: true };
+    render(<TrendsPage />);
+    await waitFor(() => expect(screen.getByTestId("trend-chart")).toHaveAttribute("data-asset-id", "asset-aapl"));
+    savedPreferences = { assetIds: ["asset-msft", "asset-aapl"], range: "1Y", initialized: true };
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.getAllByTestId("trend-chart").map((chart) => chart.dataset.assetId))
+      .toEqual(["asset-msft", "asset-aapl"]));
+    expect(screen.getByRole("button", { name: "1Y" })).toHaveAttribute("aria-pressed", "true");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
   });
 });
 

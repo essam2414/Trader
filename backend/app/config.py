@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     finnhub_api_key: str | None = None
     openai_api_key: str | None = None
     openai_news_enabled: bool = False
+    openai_news_web_search_enabled: bool = False
     openai_news_model: str = "gpt-5.4-mini"
     openai_news_daily_token_budget: int = 2_400_000
     alpaca_data_feed: str = "iex"

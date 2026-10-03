@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 
 from app.alpaca_market_data import AlpacaMarketDataClient, MarketQuote
-from app.models import WatchlistEntry
+from app.models import TrendsPreferences, WatchlistEntry
 
 
 class WatchlistLimitError(ValueError):
@@ -46,6 +46,9 @@ def remove_entry(session, asset_id: str) -> bool:
     entry = session.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
     if entry is None:
         return False
+    preferences = session.get(TrendsPreferences, 1, with_for_update=True)
+    if preferences is not None:
+        preferences.asset_ids = [selected for selected in preferences.asset_ids if selected != asset_id]
     session.delete(entry)
     session.commit()
     return True
