@@ -30,6 +30,17 @@ from app.services.news_sources import SourceItem, canonical_url
 class FakeAnalyser:
     model = "fake-model"
 
+    def compare_developments(self, incoming, history):
+        from app.services.news_novelty import NoveltyDecision
+
+        return NoveltyDecision(
+            outcome="new",
+            matchedStoryId=None,
+            reason="Distinct test contract",
+            supportingQuote=incoming["evidence"].splitlines()[0],
+            priorQuote="",
+        )
+
     def analyse(self, entries, evidence, exposures):
         return ModelAnalysis(
             relevant=True,
@@ -478,7 +489,7 @@ def test_sync_analyzes_more_than_twenty_pending_stories(db_session, monkeypatch)
         for number in range(1, 22)
     ]
     assert ingest_items(db_session, items, [entry], FailedAnalyser(), now, [0]) == 21
-    assert db_session.query(NewsStory).filter_by(status="pending").count() == 21
+    assert db_session.query(NewsStory).filter(NewsStory.status.in_(("pending", "resolving"))).count() == 21
     monkeypatch.setattr(news_digest, "configured_feeds", lambda: {})
     for source in (
         "sec_items",

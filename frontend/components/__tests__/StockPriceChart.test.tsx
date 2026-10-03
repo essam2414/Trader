@@ -188,6 +188,25 @@ describe("selected range return", () => {
 });
 
 describe("mergeDisplayBars", () => {
+  it.each(["1D", "1W"] as const)("keeps the available-data window correct for %s when live bars arrive", (range) => {
+    const start = Date.parse("2026-10-01T08:00:00Z");
+    const canonicalBars = Array.from({ length: 96 }, (_, index) => {
+      // Thursday's last eight hours, followed by Friday's full extended session.
+      const offset = index < 32 ? index + 32 : index + 64;
+      return bar(new Date(start + offset * 15 * 60 * 1000).toISOString(), 100 + index);
+    });
+    const monday = bar("2026-10-05T08:00:00.000Z", 200);
+    const result = mergeDisplayBars(
+      { ...chart, range, canonicalBars, provisionalIexBars: [canonicalBars[95]] },
+      [monday, { ...canonicalBars[95], close: 199 }],
+    );
+
+    expect(result).toHaveLength(range === "1D" ? 96 : 97);
+    expect(result[0].startsAt).toBe(canonicalBars[range === "1D" ? 1 : 0].startsAt);
+    expect(result.at(-2)?.close).toBe(199);
+    expect(result.at(-1)?.startsAt).toBe(monday.startsAt);
+  });
+
   it("returns one chronologically sorted series with provisional and live bars replacing matching timestamps", () => {
     const result = mergeDisplayBars(chart, [bar("2026-09-23T14:30:00Z", 139), bar("2026-09-23T14:45:00Z", 140)]);
     expect(result.map((point) => point.startsAt)).toEqual(["2026-09-23T14:00:00Z", "2026-09-23T14:15:00Z", "2026-09-23T14:30:00Z", "2026-09-23T14:45:00Z"]);

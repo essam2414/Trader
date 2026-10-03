@@ -63,3 +63,32 @@ def test_direction_revision_converts_existing_mixed_stories_to_unclear():
         revision.op = Operations(MigrationContext.configure(connection))
         revision.upgrade()
         assert connection.scalar(sa.text("SELECT direction FROM news_stories WHERE id = 1")) == "unclear"
+
+
+def test_identity_migration_preserves_existing_cards_and_is_safe_after_create_all():
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    path = Path(__file__).parents[1] / "alembic/versions/20261004_news_identity.py"
+    spec = importlib.util.spec_from_file_location("news_identity_revision", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    with engine.begin() as connection:
+        revision.op = Operations(MigrationContext.configure(connection))
+        revision.downgrade()
+        connection.execute(
+            sa.text(
+                "INSERT INTO news_stories (id, headline, short_summary, detail_summary, relevance_reason, "
+                "key_facts, unknowns, category, direction, status, first_seen_at, updated_at) "
+                "VALUES (1, 'Saved story', '', '', '', '[]', '[]', 'earnings', 'unclear', 'ready', "
+                "'2026-10-03', '2026-10-03')"
+            )
+        )
+        revision.upgrade()
+        revision.upgrade()
+        row = connection.execute(
+            sa.text("SELECT headline, status, identity_version, summary_dirty FROM news_stories WHERE id=1")
+        ).one()
+        assert tuple(row) == ("Saved story", "ready", 0, 0)
+        assert {"news_event_identities", "news_resolution_decisions"} <= set(
+            sa.inspect(connection).get_table_names()
+        )

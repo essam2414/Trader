@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..config import settings
 from ..models import WatchlistEntry
 from .news_ai_budget import DailyNewsTokenBudget
+from .news_novelty import NoveltyDecision, compare_developments
 from .news_sources import SourceItem
 
 Category = Literal[
@@ -126,6 +127,9 @@ class OpenAINewsAnalyser:
             and not self._disabled
             and (self._retry_after is None or datetime.now(timezone.utc) >= self._retry_after)
         )
+
+    def compare_developments(self, incoming: dict, history: list[dict]) -> NoveltyDecision | None:
+        return compare_developments(self, incoming, history)
 
     def analyse(
         self,

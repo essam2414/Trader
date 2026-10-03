@@ -1,5 +1,53 @@
 # News pipeline repair
 
+## October 4 implementation: durable development identity
+
+The runtime uses `news_resolution.py` for ingestion, scheduled/manual collection,
+pending-summary retries and database repair. The earlier headline reconciliation
+helpers remain available for historical tests, but are no longer a publication step.
+
+- `news_source_items` retains distinct content revisions instead of overwriting an
+  article's earlier evidence. Provider IDs and exact content still prevent replays.
+- `news_event_identities` persists unique aliases independently of the seven-day
+  collection window. Structured identities distinguish fiscal year/quarter and
+  earnings phase, analyst actions, and capacity-project qualifiers. Missing anchors
+  can attach to one compatible reporting window; conflicting or ambiguous projects
+  cannot be joined through a partial description. Generated categories are not keys.
+- `news_resolution_decisions` records the evidence hash, rule version, outcome,
+  reason and matched card. Semantic matches also retain their evidence quotes.
+- Unknown candidates with prior coverage use `resolving`, which is not returned by
+  the news feed or detail endpoint. The existing configured OpenAI news service
+  compares all relevant history in batches of twelve, under the same daily budget.
+  New facts can produce a linked material update; rewordings attach to the original.
+  Unavailable or ambiguous comparisons remain hidden and retry with a status notice.
+- Consolidation preserves sources, stock associations, original discovery time,
+  aliases and merged-row history. Summaries awaiting regeneration retain their last
+  usable text and are marked dirty. Summarisation never advances release order.
+- `news_dates.py` chooses the earliest verified reporting date, preferring known
+  clock precision on that day. Earlier same-day times are accepted. Discovery and
+  update timestamps are not substituted for an unknown release time. API ordering
+  applies before pagination, uses explicit null placement, and matches the frontend.
+
+Apply the additive migration before starting the updated backend:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m app.services.news_resolution
+```
+
+The last command is a read-only preview. After reviewing its output and taking a
+database backup, `python -m app.services.news_resolution --apply` applies the same
+rules. A second preview should report no merges or date corrections. The normal
+pending-summary job refreshes dirty summaries using the existing configured AI
+service; it does not fetch new news. Original release times must be treated as
+the earliest verified evidence available, not proof of the first-ever publication.
+
+Regression fixtures include the stored Toshiba expansion articles and Micron Q4
+results. Coverage exercises reversed arrival order, delayed replays, different
+fiscal periods/phases/projects, semantic failure, same-URL revisions, source quote
+validation, rate limits, date precision, migration and API pagination.
+
 ## Outcome
 
 One card represents one material development for a watched company. Manual refresh collects current evidence promptly, reports useful output separately from source health, and leaves a clear audit trail.

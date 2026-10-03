@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -253,6 +254,32 @@ class NewsStory(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     merged_into_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    event_descriptor: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+    identity_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    summary_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    related_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class NewsEventIdentity(Base):
+    """Durable aliases: several source-backed descriptions may identify one development."""
+
+    __tablename__ = "news_event_identities"
+    event_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), nullable=False, index=True)
+
+
+class NewsResolutionDecision(Base):
+    """Audit the evidence and rule version behind each publication or suppression decision."""
+
+    __tablename__ = "news_resolution_decisions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), nullable=False, index=True)
+    matched_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class NewsStorySource(Base):

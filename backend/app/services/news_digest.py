@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
@@ -24,8 +25,20 @@ from ..models import (
     WatchlistEntry,
 )
 from .news_ai import Evidence, OpenAINewsAnalyser
+from .news_dates import better_release_date as _better_release_date
 from .news_identity import same_analyst_event
-from .news_reconcile import apply_analyst_merges, plan_analyst_merges, plan_event_merges
+from .news_resolution import (
+    COVERED,
+    check_publication,
+    compatible,
+    describe,
+    descriptor_for,
+    find_development,
+    identity_key,
+    reconcile_developments,
+    record_decision,
+    remember,
+)
 from .news_sources import (
     NewsHttp,
     SourceItem,
@@ -91,7 +104,8 @@ CATALYST_WORDS = re.compile(
     r"gpu supply|data center|hyperscaler|cloud spending|software spending|saas demand|"
     r"optical transceiver|co-packaged optics|800g optics|1\.6t optics|hbm|dram prices|nand prices|"
     r"enterprise ssd|power distribution|grid constraints|"
-    r"capital expenditure|capex|launch|unveil|introduce|order|award|export restriction)\b",
+    r"capital expenditure|capex|launch|unveil|introduce|order|award|export restriction|"
+    r"production capacity|hdd capacity|hdd supply|capacity expansion)\b",
     re.I,
 )
 
@@ -106,16 +120,6 @@ def _category(title: str) -> str:
 def _utc(value: datetime) -> datetime:
     """SQLite drops timezone data in tests; all persisted timestamps are UTC."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
-def _better_release_date(
-    candidate: datetime, candidate_precision: str, current: datetime | None, current_precision: str | None
-) -> bool:
-    if current is None:
-        return True
-    if _utc(candidate).date() != _utc(current).date():
-        return _utc(candidate) < _utc(current)
-    return current_precision == "date" and candidate_precision == "minute"
 
 
 def _direction(title: str) -> str:
@@ -152,13 +156,24 @@ def _upsert_source(db: Session, item: SourceItem, now: datetime) -> tuple[NewsSo
     digest = hashlib.sha256(f"{item.title}\n{item.excerpt}".encode()).hexdigest()
     if existing:
         content_changed = existing.content_hash != digest
-        date_found = existing.published_at is None and item.published_at is not None
-        event_date_found = existing.event_date is None and item.event_date is not None
         if content_changed:
-            existing.title = item.title
-            existing.excerpt = item.excerpt
-            existing.content_hash = digest
-        if date_found:
+            # Keep immutable evidence for the earlier development. A revised article may
+            # report a new event; it must pass the same novelty checks as a new URL.
+            revision_key = f"{item.key[:420]}:revision:{digest}"
+            return _upsert_source(db, replace(item, key=revision_key), now)
+        date_found = existing.published_at is None and item.published_at is not None
+        date_corrected = bool(
+            item.published_at
+            and existing.published_at
+            and _better_release_date(
+                item.published_at,
+                item.published_date_precision,
+                existing.published_at,
+                existing.published_date_precision,
+            )
+        )
+        event_date_found = existing.event_date is None and item.event_date is not None
+        if date_found or date_corrected:
             existing.published_at = item.published_at
             existing.date_status = item.date_status if item.date_status != "unverified" else "verified"
             existing.published_date_precision = item.published_date_precision
@@ -166,9 +181,9 @@ def _upsert_source(db: Session, item: SourceItem, now: datetime) -> tuple[NewsSo
             existing.date_status = item.date_status
         if event_date_found:
             existing.event_date = item.event_date
-        if content_changed or date_found or event_date_found:
+        if date_found or date_corrected or event_date_found:
             existing.updated_at = now
-        return existing, content_changed or date_found or event_date_found
+        return existing, date_found or date_corrected or event_date_found
     record = NewsSourceItem(
         provider=item.provider,
         source_key=item.key,
@@ -206,20 +221,34 @@ def _candidate_story(
     db: Session, item: SourceItem, assets: list[WatchlistEntry], now: datetime
 ) -> NewsStory | None:
     asset_ids = {entry.alpaca_asset_id for entry in assets}
-    cutoff = now - timedelta(days=7)
-    candidates = (
-        db.query(NewsStory)
-        .filter(NewsStory.first_seen_at >= cutoff, NewsStory.status.in_(("ready", "pending")))
-        .all()
-    )
+    candidates = db.query(NewsStory).filter(NewsStory.status.in_(COVERED)).order_by(NewsStory.id).all()
+    descriptor = describe(item, assets)
     for story in candidates:
         story_assets = {row.alpaca_asset_id for row in db.query(NewsStoryStock).filter_by(story_id=story.id)}
         if not asset_ids.intersection(story_assets):
             continue
         source_ids = [link.source_item_id for link in db.query(NewsStorySource).filter_by(story_id=story.id)]
         sources = db.query(NewsSourceItem).filter(NewsSourceItem.id.in_(source_ids)).all()
-        if any(source.url == item.url for source in sources):
+        same_url = [source for source in sources if source.url == item.url]
+        if any(source.title == item.title and source.excerpt == item.excerpt for source in same_url):
             return story
+        if same_url:
+            continue
+        other = descriptor_for(db, story, assets)
+        if bool(descriptor) != bool(other):
+            continue
+        if descriptor and other:
+            # Typed conflicts must never be bypassed by headline similarity.
+            if not compatible(descriptor, other, item.published_at, story.released_at) and not (
+                descriptor == other and descriptor.get("kind") == "analyst" and item.published_at is None
+            ):
+                continue
+        if (
+            item.published_at
+            and story.released_at
+            and abs(_utc(item.published_at) - _utc(story.released_at)) > timedelta(days=7)
+        ):
+            continue
         if any(
             same_analyst_event(
                 item,
@@ -239,12 +268,11 @@ def _candidate_story(
             for source in sources
         ):
             return story
-        if story.category != _category(item.title):
-            continue
         if story.category == "analyst":
             continue
         if any(
-            _story_similarity(item.title, source.title) >= 0.80
+            _story_similarity(item.title, source.title) == 1.0
+            and item.excerpt == source.excerpt
             and not (
                 _numbers(item.title)
                 and _numbers(source.title)
@@ -300,10 +328,14 @@ def _analyse_story(
     )
     if result is None:
         if story.status != "ready":
-            story.status = "pending"
+            story.status = "resolving" if story.status == "resolving" else "pending"
         return
     if not result.relevant:
         story.status = "irrelevant"
+        return
+    if not check_publication(db, story, analyser, now):
+        if story.status == "resolving":
+            analyser.last_failure_reason = "Checking for new facts; duplicate comparison is incomplete"
         return
     story.headline = result.headline
     story.short_summary = result.shortSummary
@@ -315,6 +347,7 @@ def _analyse_story(
     story.direction = result.direction
     story.model_version = analyser.model
     story.status = "ready"
+    story.summary_dirty = False
     story.updated_at = now
     db.query(NewsStoryStock).filter_by(story_id=story.id).delete()
     for asset_id in set(result.affectedAssetIds):
@@ -342,8 +375,25 @@ def ingest_items(
         source, changed = _upsert_source(db, item, now)
         if not changed and _linked_story(db, source.id):
             continue
-        story = _linked_story(db, source.id) or _candidate_story(db, item, assets, now)
+        revised = ":revision:" in source.source_key
+        matched, descriptor, ambiguous = (
+            find_development(db, item, assets) if not revised else (None, {}, True)
+        )
+        story = _linked_story(db, source.id) or matched
+        if story is None and not ambiguous:
+            story = _candidate_story(db, item, assets, now)
+        is_new = story is None
         if story is None:
+            has_history = (
+                db.query(NewsStory)
+                .join(NewsStoryStock)
+                .filter(
+                    NewsStory.status.in_(COVERED),
+                    NewsStoryStock.alpaca_asset_id.in_([asset.alpaca_asset_id for asset in assets]),
+                )
+                .first()
+                is not None
+            )
             story = NewsStory(
                 headline=item.title,
                 short_summary=item.excerpt[:450],
@@ -353,7 +403,9 @@ def ingest_items(
                 unknowns=[],
                 category=_category(item.title),
                 direction=_direction(item.title),
-                status="pending",
+                status="resolving"
+                if ambiguous or (has_history and not identity_key(descriptor))
+                else "pending",
                 released_at=item.published_at,
                 released_date_precision=item.published_date_precision if item.published_at else None,
                 first_seen_at=now,
@@ -361,8 +413,11 @@ def ingest_items(
             )
             db.add(story)
             db.flush()
+        remember(db, story, descriptor)
         if not db.query(NewsStorySource).filter_by(story_id=story.id, source_item_id=source.id).first():
             db.add(NewsStorySource(story_id=story.id, source_item_id=source.id))
+            if story.status == "ready":
+                story.summary_dirty = True
         if story.event_date is None:
             story.event_date = item.event_date or source.event_date
         for asset in assets:
@@ -381,14 +436,25 @@ def ingest_items(
             story.released_at = item.published_at
             story.released_date_precision = item.published_date_precision
         db.flush()
+        record_decision(
+            db,
+            story,
+            "unresolved" if story.status == "resolving" else "new" if is_new else "additional_coverage",
+            "Source identity resolved" if story.status != "resolving" else "Awaiting novelty check",
+            now,
+        )
+        if story.status == "expired":
+            processed += 1
+            continue
         if analysis_budget is not None and analysis_budget[0] <= 0:
-            if story.status != "ready":
+            if story.status not in {"ready", "resolving"}:
                 story.status = "pending"
         else:
             _analyse_story(db, story, entries, analyser, now)
             if analysis_budget is not None:
                 analysis_budget[0] -= 1
         processed += 1
+    reconcile_developments(db, now, apply=True)
     db.commit()
     return processed
 
@@ -404,7 +470,22 @@ def retry_pending(
     retried = 0
     if budget[0] <= 0:
         return retried
-    for story in db.query(NewsStory).filter_by(status="pending").order_by(NewsStory.first_seen_at):
+    reconcile_developments(db, now, apply=True)
+    db.commit()
+    for story in (
+        db.query(NewsStory)
+        .filter(
+            NewsStory.status.in_(("pending", "resolving"))
+            | ((NewsStory.status == "ready") & NewsStory.summary_dirty)
+        )
+        .order_by(NewsStory.first_seen_at, NewsStory.id)
+        .all()
+    ):
+        if story.status == "merged":
+            continue
+        if not story.identity_version and not story.event_descriptor and story.status == "pending":
+            story.status = "resolving"
+            db.commit()
         if budget[0] <= 0:
             break
         if not {entry.alpaca_asset_id for entry in entries}.intersection(
@@ -416,7 +497,7 @@ def retry_pending(
         if not force and state and state.next_attempt_at and now < _utc(state.next_attempt_at):
             continue
         _analyse_story(db, story, entries, analyser, now)
-        if story.status == "pending":
+        if story.status in {"pending", "resolving"} or story.summary_dirty:
             if state is None:
                 state = NewsSyncState(source_key=state_key)
                 db.add(state)
@@ -444,7 +525,11 @@ def run_pending_analysis(db: Session, analyser: OpenAINewsAnalyser | None = None
     entries = db.query(WatchlistEntry).all()
     if not entries:
         return 0
-    pending_count = db.query(NewsStory).filter_by(status="pending").count()
+    pending_count = (
+        db.query(NewsStory)
+        .filter(NewsStory.status.in_(("pending", "resolving")) | NewsStory.summary_dirty)
+        .count()
+    )
     return retry_pending(db, entries, analyser, datetime.now(timezone.utc), [pending_count])
 
 
@@ -533,12 +618,8 @@ def run_news_sync(
     failed: list[str] = []
     skipped: list[str] = []
     try:
-        existing_merges = plan_event_merges(db)
-        if existing_merges:
-            apply_analyst_merges(db, existing_merges, now)
-        existing_analyst_merges = plan_analyst_merges(db)
-        if existing_analyst_merges:
-            apply_analyst_merges(db, existing_analyst_merges, now)
+        reconcile_developments(db, now, apply=True)
+        db.commit()
         ready_before_ids = {story_id for (story_id,) in db.query(NewsStory.id).filter_by(status="ready")}
         watched_symbols = {entry.symbol.upper() for entry in entries}
         for provider, url in configured_feeds().items():
@@ -612,17 +693,16 @@ def run_news_sync(
         finally:
             if executor:
                 executor.shutdown(wait=True)
-        pending_count = db.query(NewsStory).filter_by(status="pending").count()
+        pending_count = (
+            db.query(NewsStory)
+            .filter(NewsStory.status.in_(("pending", "resolving")) | NewsStory.summary_dirty)
+            .count()
+        )
         budget = [
             pending_count if not isinstance(analyser, OpenAINewsAnalyser) or analyser.available() else 0
         ]
         results["pending_retried"] = retry_pending(db, entries, analyser, now, budget, force=force)
-        new_merges = plan_event_merges(db)
-        if new_merges:
-            apply_analyst_merges(db, new_merges, now)
-        new_analyst_merges = plan_analyst_merges(db)
-        if new_analyst_merges:
-            apply_analyst_merges(db, new_analyst_merges, now)
+        reconcile_developments(db, now, apply=True)
         new_source_count = db.query(NewsSourceItem).filter(NewsSourceItem.first_seen_at == now).count()
         ready_after_ids = {story_id for (story_id,) in db.query(NewsStory.id).filter_by(status="ready")}
         new_card_count = len(ready_after_ids - ready_before_ids)

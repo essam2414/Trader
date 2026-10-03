@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from ..auth import require_api_key
@@ -95,11 +96,19 @@ def list_news(
 ) -> list[CatalystCardOut]:
     stories = (
         db.query(NewsStory)
-        .join(NewsStoryStock)
-        .join(WatchlistEntry, WatchlistEntry.alpaca_asset_id == NewsStoryStock.alpaca_asset_id)
-        .filter(NewsStory.status.in_(("ready", "pending")))
-        .distinct()
-        .order_by(NewsStory.released_at.desc(), NewsStory.first_seen_at.desc())
+        .filter(
+            NewsStory.status.in_(("ready", "pending")),
+            NewsStory.id.in_(
+                db.query(NewsStoryStock.story_id).join(
+                    WatchlistEntry, WatchlistEntry.alpaca_asset_id == NewsStoryStock.alpaca_asset_id
+                )
+            ),
+        )
+        .order_by(
+            NewsStory.released_at.desc().nullslast(),
+            case((NewsStory.released_at.is_(None), NewsStory.first_seen_at)).desc().nullslast(),
+            NewsStory.id.desc(),
+        )
         .offset(offset)
         .limit(limit)
         .all()
@@ -118,7 +127,14 @@ def news_status(db: Session = Depends(get_db)) -> NewsStatusOut:
         .order_by(NewsCollectionRun.started_at.desc(), NewsCollectionRun.id.desc())
         .first()
     )
-    pending = db.query(NewsStory).filter_by(status="pending").all()
+    pending = (
+        db.query(NewsStory)
+        .filter(
+            NewsStory.status.in_(("pending", "resolving"))
+            | ((NewsStory.status == "ready") & NewsStory.summary_dirty)
+        )
+        .all()
+    )
     pending_by_id = {story.id: story for story in pending}
     analysis_states = db.query(NewsSyncState).filter(NewsSyncState.source_key.startswith("analysis:")).all()
     summary_issues = []
@@ -142,6 +158,7 @@ def news_status(db: Session = Depends(get_db)) -> NewsStatusOut:
         failedSources=sorted(state.source_key for state in states if state.last_error),
         sourceErrors=_source_errors(states),
         pendingSummaries=len(pending),
+        unresolvedDevelopments=sum(story.status == "resolving" for story in pending),
         pendingSummaryIssues=sorted(summary_issues, key=lambda issue: issue.storyId),
         lastRun=NewsRunOut(
             startedAt=_utc(run.started_at),

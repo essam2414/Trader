@@ -431,6 +431,7 @@ export function NewsSection() {
     </div>
     {tab === "news" && newsStatus && newsStatus.pendingSummaries > 0 && <div role="status" className="mt-2 rounded-md bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
       {newsStatus.pendingSummaries} source-backed {newsStatus.pendingSummaries === 1 ? "story has" : "stories have"} a summary pending. Summaries retry automatically.
+      {(newsStatus.unresolvedDevelopments ?? 0) > 0 && <p className="mt-1">{newsStatus.unresolvedDevelopments} possible developments are being checked against earlier coverage before appearing here.</p>}
       {(newsStatus.pendingSummaryIssues?.length ?? 0) > 0 && <details className="mt-1">
         <summary className="cursor-pointer">See retry status</summary>
         <ul className="mt-2 space-y-1 pl-4">{newsStatus.pendingSummaryIssues.map((issue) => <li key={issue.storyId} className="list-disc">{issue.headline}: {issue.reason}{issue.nextRetryAt ? ` · Next retry ${timeLabel(issue.nextRetryAt)}` : ""}</li>)}</ul>

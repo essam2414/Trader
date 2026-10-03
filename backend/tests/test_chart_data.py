@@ -81,25 +81,75 @@ def test_one_day_chart_outputs_fifteen_minute_iex_tail_closes():
     assert chart.provisional_iex_bars[0].close == iex_bars[-1].close
 
 
-def test_one_day_chart_shows_last_available_trading_day_on_sunday():
-    sunday = datetime(2026, 9, 27, 16, tzinfo=timezone.utc)
-    thursday = historical_bar(datetime(2026, 9, 24, 19, 30, tzinfo=timezone.utc), Decimal("99"))
-    friday = [
-        historical_bar(datetime(2026, 9, 25, 14, 30, tzinfo=timezone.utc), Decimal("100")),
-        historical_bar(datetime(2026, 9, 25, 19, 30, tzinfo=timezone.utc), Decimal("101")),
-    ]
-
-    class WindowedClient(RecordingMarketDataClient):
-        def get_historical_bars(self, symbol, start, end, timeframe, adjustment):
-            bars = super().get_historical_bars(symbol, start, end, timeframe, adjustment)
-            return [bar for bar in bars if start <= bar.starts_at <= end]
-
-    sip_client = WindowedClient(bars=[thursday, *friday])
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 10, 3, 16, tzinfo=timezone.utc),
+        datetime(2026, 10, 3, 23, 9, tzinfo=timezone.utc),
+        datetime(2026, 10, 4, 16, tzinfo=timezone.utc),
+        datetime(2026, 10, 5, 7, tzinfo=timezone.utc),
+    ],
+)
+def test_one_day_chart_keeps_twenty_four_available_hours_while_market_is_closed(now):
+    thursday = intraday_session(datetime(2026, 10, 1, 8, tzinfo=timezone.utc))
+    friday = intraday_session(datetime(2026, 10, 2, 8, tzinfo=timezone.utc))
+    sip_client = WindowedMarketDataClient(bars=[*thursday, *friday])
     source = AlpacaChartDataSource(sip_client, RecordingMarketDataClient(bars=[]))
 
-    chart = source.load_chart(watchlist_entry(), CHART_RANGES["1D"], sunday)
+    chart = source.load_chart(watchlist_entry(), CHART_RANGES["1D"], now)
 
-    assert [bar.starts_at for bar in chart.canonical_bars] == [bar.starts_at for bar in friday]
+    expected = [*thursday[32:], *friday]
+    assert [bar.starts_at for bar in chart.canonical_bars] == [bar.starts_at for bar in expected]
+
+
+def test_one_day_chart_fills_partial_session_from_before_a_holiday_gap():
+    older_session = intraday_session(datetime(2026, 9, 3, 8, tzinfo=timezone.utc))
+    previous_session = intraday_session(datetime(2026, 9, 4, 8, tzinfo=timezone.utc))
+    current_session = intraday_session(datetime(2026, 9, 8, 8, tzinfo=timezone.utc))[:8]
+    source = AlpacaChartDataSource(
+        WindowedMarketDataClient(bars=[*older_session, *previous_session, *current_session]),
+        RecordingMarketDataClient(bars=[]),
+    )
+
+    chart = source.load_chart(
+        watchlist_entry(), CHART_RANGES["1D"], datetime(2026, 9, 8, 10, tzinfo=timezone.utc)
+    )
+
+    expected = [*older_session[40:], *previous_session, *current_session]
+    assert [bar.starts_at for bar in chart.canonical_bars] == [bar.starts_at for bar in expected]
+
+
+def test_one_day_chart_counts_overlapping_iex_tail_once_in_twenty_four_hour_window():
+    thursday = intraday_session(datetime(2026, 10, 1, 8, tzinfo=timezone.utc))
+    friday = intraday_session(datetime(2026, 10, 2, 8, tzinfo=timezone.utc))
+    monday = intraday_session(datetime(2026, 10, 5, 8, tzinfo=timezone.utc))[:2]
+    source = AlpacaChartDataSource(
+        WindowedMarketDataClient(bars=[*thursday, *friday, monday[0]]),
+        WindowedMarketDataClient(
+            bars=[historical_bar(monday[0].starts_at + timedelta(minutes=5), Decimal("101")), monday[1]]
+        ),
+    )
+
+    chart = source.load_chart(
+        watchlist_entry(), CHART_RANGES["1D"], datetime(2026, 10, 5, 8, 20, tzinfo=timezone.utc)
+    )
+
+    assert [bar.starts_at for bar in chart.canonical_bars] == [
+        bar.starts_at for bar in [*thursday[34:], *friday, monday[0]]
+    ]
+    assert [bar.starts_at for bar in chart.provisional_iex_bars] == [bar.starts_at for bar in monday]
+
+
+@pytest.mark.parametrize("available_bars", [0, 3])
+def test_one_day_chart_does_not_invent_bars_when_history_is_short(available_bars):
+    bars = intraday_session(datetime(2026, 10, 2, 8, tzinfo=timezone.utc))[:available_bars]
+    source = AlpacaChartDataSource(WindowedMarketDataClient(bars=bars), RecordingMarketDataClient(bars=[]))
+
+    chart = source.load_chart(
+        watchlist_entry(), CHART_RANGES["1D"], datetime(2026, 10, 3, 23, 9, tzinfo=timezone.utc)
+    )
+
+    assert [bar.starts_at for bar in chart.canonical_bars] == [bar.starts_at for bar in bars]
 
 
 def test_max_chart_requests_five_year_history_and_returns_monthly_bars():
@@ -286,6 +336,16 @@ class RecordingMarketDataClient:
             if self.bars is not None
             else [historical_bar(datetime(2026, 9, 23, 15, 30, tzinfo=timezone.utc), self.close)]
         )
+
+
+class WindowedMarketDataClient(RecordingMarketDataClient):
+    def get_historical_bars(self, symbol, start, end, timeframe, adjustment):
+        bars = super().get_historical_bars(symbol, start, end, timeframe, adjustment)
+        return [bar for bar in bars if start <= bar.starts_at <= end]
+
+
+def intraday_session(start: datetime) -> list[HistoricalBar]:
+    return [historical_bar(start + timedelta(minutes=15 * index), Decimal("100")) for index in range(64)]
 
 
 def historical_bar(starts_at: datetime, close: Decimal) -> HistoricalBar:

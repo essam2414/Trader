@@ -231,6 +231,7 @@ export interface NewsStatus {
   failedSources: string[];
   sourceErrors: SourceError[];
   pendingSummaries: number;
+  unresolvedDevelopments?: number;
   pendingSummaryIssues: { storyId: number; headline: string; reason: string; nextRetryAt: string | null }[];
 }
 

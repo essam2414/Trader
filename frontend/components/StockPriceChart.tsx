@@ -6,6 +6,7 @@ import { conciseStockName, StockLogo } from "./WatchlistItem";
 import type { ChartRange, StockChart, StockChartBar, WatchlistEntry, WatchlistPositionPrice } from "../lib/types";
 
 const RANGES: ChartRange[] = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
+const ONE_DAY_BAR_COUNT = 24 * 60 / 15;
 
 export interface ChartLiveState {
   bars: StockChartBar[];
@@ -47,9 +48,11 @@ export function mergeDisplayBars(chart: StockChart, liveBars: StockChartBar[] = 
   for (const bar of chart.canonicalBars) byTimestamp.set(bar.startsAt, bar);
   for (const bar of chart.provisionalIexBars) byTimestamp.set(bar.startsAt, bar);
   for (const bar of liveBars) byTimestamp.set(bar.startsAt, bar);
-  return [...byTimestamp.values()]
-    .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime())
-    .map((bar) => ({ ...bar, label: formatTimestamp(bar.startsAt, chart.range) }));
+  const sortedBars = [...byTimestamp.values()]
+    .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime());
+  // Keep the rolling 24 hours of available bars as new stream buckets arrive.
+  const visibleBars = chart.range === "1D" ? sortedBars.slice(-ONE_DAY_BAR_COUNT) : sortedBars;
+  return visibleBars.map((bar) => ({ ...bar, label: formatTimestamp(bar.startsAt, chart.range) }));
 }
 
 export function calculateRangeReturn(points: StockChartBar[], latestPrice: number | null): number | null {

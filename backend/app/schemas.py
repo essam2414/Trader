@@ -271,6 +271,7 @@ class NewsStatusOut(BaseModel):
     failedSources: list[str]
     sourceErrors: list[SourceErrorOut]
     pendingSummaries: int
+    unresolvedDevelopments: int = 0
     pendingSummaryIssues: list[PendingSummaryIssueOut]
     lastRun: NewsRunOut | None = None
 

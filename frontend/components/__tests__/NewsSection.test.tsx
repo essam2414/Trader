@@ -57,6 +57,7 @@ function stubBriefing(news: CatalystCard[] = [card], events = [event], failedEve
       sources: [{
         title: "Official announcement", provider: "company", url: "https://example.com/release",
         publishedAt: "2026-09-24T20:00:00Z",
+        dateStatus: "verified",
       }],
     });
     throw new Error(`Unexpected request: ${path}`);
@@ -67,6 +68,19 @@ function stubBriefing(news: CatalystCard[] = [card], events = [event], failedEve
 
 describe("NewsSection", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("explains why possible duplicates are waiting outside the feed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/news/status") return response({
+        lastSuccessfulRunAt: null, failedSources: [], sourceErrors: [],
+        pendingSummaries: 2, unresolvedDevelopments: 2, pendingSummaryIssues: [],
+      });
+      if (path === "/api/events/status") return response({ lastSuccessfulRunAt: null, sourceErrors: [] });
+      return response([]);
+    }));
+    render(<NewsSection />);
+    expect(await screen.findByText(/2 possible developments are being checked against earlier coverage/)).toBeInTheDocument();
+  });
 
   it("colors upside and downside news cards while leaving unclear cards neutral", async () => {
     stubBriefing([
@@ -81,7 +95,7 @@ describe("NewsSection", () => {
     expect(screen.getByRole("button", { name: /Acme announces review/i })).toHaveClass("bg-neutral-900/50");
   });
 
-  it("keeps undated discoveries below verified releases", async () => {
+  it("keeps undated discoveries out of the verified feed until its filter is changed", async () => {
     stubBriefing([
       { ...card, id: 8, headline: "Undated analyst report", releasedAt: null,
         firstSeenAt: "2026-09-27T14:27:00Z" },
@@ -89,10 +103,11 @@ describe("NewsSection", () => {
     ]);
     render(<NewsSection />);
 
-    expect(await screen.findByRole("button", { name: /Undated analyst report/i })).toBeInTheDocument();
-    const cards = within(screen.getByLabelText("News articles")).getAllByRole("button");
-    expect(cards[0]).toHaveTextContent("Dated analyst report");
-    expect(cards[1]).toHaveTextContent("Publication date unverified");
+    expect(await screen.findByRole("button", { name: /Dated analyst report/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Undated analyst report/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Showing verified news/ }));
+    expect(screen.getByRole("button", { name: /Undated analyst report/i })).toHaveTextContent("Publication date unverified");
+    expect(screen.queryByRole("button", { name: /\bDated analyst report/i })).not.toBeInTheDocument();
   });
 
   it("shows one card per story, watched symbols, source detail, and partial source status", async () => {

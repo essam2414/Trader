@@ -11,12 +11,15 @@ from ..db import SessionLocal
 from ..models import (
     MarketEvent,
     MarketEventStock,
+    NewsEventIdentity,
     NewsSourceItem,
     NewsStory,
     NewsStorySource,
     NewsStoryStock,
     WatchlistEntry,
 )
+from .news_dates import better_release_date as _better_release_date
+from .news_dates import earliest_release
 from .news_identity import analyst_event_key, analyst_target_action_key
 from .news_sources import SourceItem
 
@@ -216,9 +219,7 @@ def plan_event_merges(db: Session) -> list[MergePlan]:
                 for source in db.query(NewsSourceItem).filter(NewsSourceItem.id.in_(source_ids))
                 if source.published_at
             ]
-            earliest_source = (
-                min(dated_sources, key=lambda source: _utc(source.published_at)) if dated_sources else None
-            )
+            earliest_source = earliest_release(dated_sources)
             plans.append(
                 MergePlan(
                     survivor.id,
@@ -233,19 +234,6 @@ def plan_event_merges(db: Session) -> list[MergePlan]:
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
-def _better_release_date(
-    candidate: datetime,
-    candidate_precision: str | None,
-    current: datetime | None,
-    current_precision: str | None,
-) -> bool:
-    if current is None:
-        return True
-    if _utc(candidate).date() != _utc(current).date():
-        return _utc(candidate) < _utc(current)
-    return current_precision == "date" and candidate_precision == "minute"
 
 
 def plan_analyst_merges(db: Session) -> list[MergePlan]:
@@ -324,9 +312,7 @@ def plan_analyst_merges(db: Session) -> list[MergePlan]:
                 for source in db.query(NewsSourceItem).filter(NewsSourceItem.id.in_(source_ids))
                 if source.published_at
             ]
-            earliest_source = (
-                min(dated_sources, key=lambda source: _utc(source.published_at)) if dated_sources else None
-            )
+            earliest_source = earliest_release(dated_sources)
             plans.append(
                 MergePlan(
                     survivor.id,
@@ -362,6 +348,10 @@ def apply_analyst_merges(db: Session, plans: list[MergePlan], now: datetime) -> 
             survivor.first_seen_at = min(_utc(survivor.first_seen_at), _utc(duplicate.first_seen_at))
             duplicate.status = "merged"
             duplicate.merged_into_story_id = survivor.id
+            db.query(NewsEventIdentity).filter_by(story_id=duplicate.id).update({"story_id": survivor.id})
+            db.query(NewsStory).filter_by(merged_into_story_id=duplicate.id).update(
+                {"merged_into_story_id": survivor.id}
+            )
             merged += 1
         if plan.released_at and _better_release_date(
             plan.released_at,
@@ -380,6 +370,7 @@ def apply_analyst_merges(db: Session, plans: list[MergePlan], now: datetime) -> 
             if event_dates:
                 survivor.event_date = min(event_dates)
         survivor.updated_at = now
+        survivor.summary_dirty = True
     db.commit()
     return merged
 

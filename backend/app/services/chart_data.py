@@ -21,7 +21,8 @@ FIFTEEN_MINUTES = 15 * ONE_MINUTE
 THIRTY_MINUTES = 30 * ONE_MINUTE
 ONE_HOUR = 60 * ONE_MINUTE
 SIP_CACHE_TTL_SECONDS = 30
-ONE_DAY_FALLBACK_LOOKBACK = timedelta(days=14)
+ONE_DAY_HISTORY_LOOKBACK = timedelta(days=14)
+ONE_DAY_BAR_COUNT = 24 * ONE_HOUR // FIFTEEN_MINUTES
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,8 @@ class ChartRange:
 
 
 CHART_RANGES = {
-    "1D": ChartRange("1D", timedelta(days=1), "15Min", FIFTEEN_MINUTES),
+    # Fetch across closed-market gaps, then display the latest 24 hours of actual bars.
+    "1D": ChartRange("1D", ONE_DAY_HISTORY_LOOKBACK, "15Min", FIFTEEN_MINUTES),
     "1W": ChartRange("1W", timedelta(days=7), "30Min", THIRTY_MINUTES),
     "1M": ChartRange("1M", timedelta(days=31), "4Hour", 4 * ONE_HOUR),
     "3M": ChartRange("3M", timedelta(days=93), "1Day", 24 * ONE_HOUR),
@@ -110,6 +112,13 @@ class AlpacaChartDataSource:
         iex_bars = (
             self._iex_tail(entry, chart_range, canonical_through, now) if include_provisional_iex else []
         )
+        if chart_range.name == "1D":
+            # Count overlapping SIP/IEX buckets once and preserve their provenance.
+            timestamps = sorted({bar.starts_at for bar in [*canonical_bars, *iex_bars]})
+            if len(timestamps) > ONE_DAY_BAR_COUNT:
+                start = timestamps[-ONE_DAY_BAR_COUNT]
+                canonical_bars = [bar for bar in canonical_bars if bar.starts_at >= start]
+                iex_bars = [bar for bar in iex_bars if bar.starts_at >= start]
         return ChartSnapshot(canonical_bars, iex_bars, canonical_through)
 
     def _sip_bars(
@@ -131,20 +140,6 @@ class AlpacaChartDataSource:
             chart_range.alpaca_timeframe,
             adjustment=CHART_ADJUSTMENT,
         )
-        if chart_range.name == "1D" and chart_range.window is not None and not bars:
-            # A calendar-day window is empty on weekends and holidays. Anchor the
-            # displayed day to the latest real bar instead of inventing closed-market bars.
-            older_bars = self._sip_client.get_historical_bars(
-                entry.symbol,
-                canonical_through - ONE_DAY_FALLBACK_LOOKBACK,
-                canonical_through,
-                chart_range.alpaca_timeframe,
-                adjustment=CHART_ADJUSTMENT,
-            )
-            if older_bars:
-                latest_bar = max(_as_utc(bar.starts_at) for bar in older_bars)
-                fallback_start = latest_bar - chart_range.window
-                bars = [bar for bar in older_bars if _as_utc(bar.starts_at) > fallback_start]
         chart_bars = aggregate_chart_bars(
             (
                 _bar_from_provider(bar, "regular" if chart_range.alpaca_timeframe == "1Day" else None)
@@ -152,6 +147,8 @@ class AlpacaChartDataSource:
             ),
             chart_range,
         )
+        if chart_range.name == "1D":
+            chart_bars = chart_bars[-ONE_DAY_BAR_COUNT:]
         cached = _CachedSIPRange(
             bars=chart_bars,
             canonical_through=canonical_through,

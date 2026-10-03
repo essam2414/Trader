@@ -118,6 +118,40 @@ def test_news_routes_show_one_sourced_story_only_for_current_watchlist(client, d
     assert client.get("/api/news/42", headers=headers).status_code == 404
 
 
+def test_news_orders_before_pagination_and_hides_unresolved_developments(client, db_session):
+    when = datetime(2026, 10, 3, tzinfo=timezone.utc)
+    db_session.add(
+        WatchlistEntry(alpaca_asset_id="asset-order", symbol="MU", name="Micron", exchange="NASDAQ")
+    )
+    for number, released, status in [
+        (1, when, "ready"),
+        (2, None, "ready"),
+        (3, when, "pending"),
+        (4, when, "resolving"),
+    ]:
+        db_session.add(
+            NewsStory(
+                id=number,
+                headline=str(number),
+                status=status,
+                released_at=released,
+                first_seen_at=when,
+                updated_at=when,
+            )
+        )
+        db_session.flush()
+        db_session.add(NewsStoryStock(story_id=number, alpaca_asset_id="asset-order"))
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+    ids = [
+        client.get(f"/api/news?limit=1&offset={offset}", headers=headers).json()[0]["id"]
+        for offset in range(3)
+    ]
+    assert ids == [3, 1, 2]
+    assert client.get("/api/news/4", headers=headers).status_code == 404
+    assert client.get("/api/news/status", headers=headers).json()["unresolvedDevelopments"] == 1
+
+
 def article(article_id, headline, created_at, updated_at, symbols):
     return {
         "id": article_id,

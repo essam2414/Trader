@@ -26,12 +26,9 @@ def upgrade() -> None:
     op.add_column("news_source_items", sa.Column("event_date", sa.Date(), nullable=True))
     op.add_column("news_stories", sa.Column("event_date", sa.Date(), nullable=True))
     op.execute(
-        "UPDATE news_source_items SET published_date_precision = 'minute' "
-        "WHERE published_at IS NOT NULL"
+        "UPDATE news_source_items SET published_date_precision = 'minute' WHERE published_at IS NOT NULL"
     )
-    op.execute(
-        "UPDATE news_stories SET released_date_precision = 'minute' WHERE released_at IS NOT NULL"
-    )
+    op.execute("UPDATE news_stories SET released_date_precision = 'minute' WHERE released_at IS NOT NULL")
 
 
 def downgrade() -> None:
