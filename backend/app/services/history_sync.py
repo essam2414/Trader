@@ -8,14 +8,14 @@ id, skipping rows already stored.
 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 from sqlalchemy.orm import Session
 
 from ..fx import HISTORICAL_RATE_TIMEOUT_SECONDS, get_historical_rate
-from ..models import Dividend, HistorySyncState, OrderFill
+from ..models import Dividend, HistoricalFxRate, HistorySyncState, OrderFill
 from ..trading212 import Trading212Client
 
 HISTORY_PAGE_SIZE = 50
@@ -87,14 +87,18 @@ def _sync_order_fill_pages(
     stop_when_existing: bool,
     deadline: float | None,
 ) -> HistoryPageBatch:
-    """Read a bounded run of order pages and commit each page's progress.
+    """Read bounded order pages, saving FX progress before committing complete pages.
 
     When catching up, the first previously stored fill proves that all older
     pages were imported by an earlier completed run. The caller then clears
-    the saved continuation cursor.
+    the saved continuation cursor. FX rates are durable so a page spanning
+    many trading dates can be prepared over multiple runs without stalling.
     """
     existing_fills = {row.id: row for row in session.query(OrderFill).all()}
-    rate_cache: dict[tuple[str, str], float] = {}
+    rate_cache = {
+        (row.rate_date.isoformat(), row.from_currency): row.rate
+        for row in session.query(HistoricalFxRate).filter(HistoricalFxRate.to_currency == target_currency)
+    }
     added = 0
     pages_fetched = 0
     reached_existing_item = False
@@ -104,10 +108,24 @@ def _sync_order_fill_pages(
             break
         page = client.get_historical_orders(cursor=cursor, limit=HISTORY_PAGE_SIZE)
         required_fx_rates = _required_fx_rates(page["items"], existing_fills, target_currency, rate_cache)
-        if (
-            deadline is not None
-            and time.monotonic() + (len(required_fx_rates) * HISTORICAL_RATE_TIMEOUT_SECONDS) >= deadline
-        ):
+        for rate_date, fill_currency in sorted(required_fx_rates):
+            if deadline is not None and time.monotonic() + HISTORICAL_RATE_TIMEOUT_SECONDS >= deadline:
+                # Retry this same page next time with the already persisted rates.
+                # No fills from an incomplete page can masquerade as old history.
+                return HistoryPageBatch(added, pages_fetched, next_cursor, reached_existing_item)
+            rate = get_historical_rate(rate_date, fill_currency, target_currency)
+            session.add(
+                HistoricalFxRate(
+                    rate_date=date.fromisoformat(rate_date),
+                    from_currency=fill_currency,
+                    to_currency=target_currency,
+                    rate=rate,
+                )
+            )
+            # Keep successful lookups even if a later lookup fails or the app closes.
+            session.commit()
+            rate_cache[(rate_date, fill_currency)] = rate
+        if deadline is not None and time.monotonic() >= deadline:
             break
         pages_fetched += 1
         page_has_existing_item = False

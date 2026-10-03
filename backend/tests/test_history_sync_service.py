@@ -1,11 +1,16 @@
 """Tests for the history sync service that persists Trading212 order/dividend history."""
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
+import respx
+from sqlalchemy.orm import Session
 
 from app.models import Dividend, HistorySyncState, OrderFill
+from app.routers.portfolio import get_portfolio_metrics
 from app.services.history_sync import (
     NATIVE_PRICE_BACKFILL_SOURCE,
     sync_dividends,
@@ -482,6 +487,168 @@ def test_sync_history_defers_fx_page_when_time_budget_cannot_cover_rate_lookup(
 
     assert db_session.query(OrderFill).count() == 0
     mock_get_rate.assert_not_called()
+
+
+@respx.mock
+def test_sync_history_catches_up_week_of_foreign_currency_trades_across_restarts(db_session, monkeypatch):
+    """A page requiring more FX time than one tick still reaches the History table."""
+    page = {"items": [], "nextPagePath": None}
+    for day in range(28, 33):
+        item = deepcopy(ORDER_PAGE_1["items"][0])
+        item["order"]["id"] = day
+        item["fill"]["id"] = day
+        date = f"2026-09-{day}" if day <= 30 else f"2026-10-{day - 30:02}"
+        item["fill"]["filledAt"] = f"{date}T13:00:00Z"
+        if day == 32:
+            item["order"]["side"] = "SELL"
+            item["fill"]["quantity"] = -10.0
+            item["fill"]["price"] = 110.0
+            item["fill"]["walletImpact"]["netValue"] = 1100.0
+            item["fill"]["walletImpact"]["realisedProfitLoss"] = 100.0
+        page["items"].insert(0, item)
+
+    elapsed = [0.0]
+    monkeypatch.setattr("app.services.history_sync.time.monotonic", lambda: elapsed[0])
+
+    def fx_response(request):
+        elapsed[0] += 9.0
+        return httpx.Response(200, json={"rates": {"GBP": 0.8}})
+
+    fx = respx.get(url__regex=r"https://api\.frankfurter\.dev/v1/2026-\d{2}-\d{2}").mock(
+        side_effect=fx_response
+    )
+    first_client = MagicMock()
+    first_client.get_historical_orders.return_value = page
+    first_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+
+    sync_history(db_session, first_client, target_currency="GBP", deadline=35.0)
+
+    assert fx.call_count == 3  # Save achievable progress instead of rejecting all five dates.
+    assert get_portfolio_metrics(db_session).trades == []
+
+    # A fresh session/client represents a reopened app with no in-process FX cache.
+    elapsed[0] = 0.0
+    second_client = MagicMock()
+    second_client.get_historical_orders.return_value = page
+    second_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+    with Session(db_session.get_bind()) as reopened_session:
+        sync_history(reopened_session, second_client, target_currency="GBP", deadline=35.0)
+        metrics = get_portfolio_metrics(reopened_session)
+        assert metrics.closedTradeCount == 1
+        assert metrics.trades[0].exitAt.date().isoformat() == "2026-10-02"
+        assert metrics.trades[0].entryPrice == 100.0
+        assert metrics.trades[0].exitPrice == 110.0
+        assert metrics.trades[0].pnl == 78.4
+        assert metrics.trading212RealizedPnl == 80.0
+        assert reopened_session.query(OrderFill).count() == 5
+
+        sync_history(reopened_session, second_client, target_currency="GBP", deadline=35.0)
+        assert reopened_session.query(OrderFill).count() == 5
+        assert get_portfolio_metrics(reopened_session).closedTradeCount == 1
+
+    assert fx.call_count == 5  # Every required date was fetched once across all three runs.
+
+
+@respx.mock
+def test_sync_history_keeps_successful_fx_lookups_when_a_later_lookup_fails(db_session, monkeypatch):
+    """A provider outage cannot erase the preparation needed to import a page."""
+    page = {
+        "items": [ORDER_PAGE_1["items"][0], ORDER_PAGE_2["items"][0]],
+        "nextPagePath": None,
+    }
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.return_value = page
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+    monkeypatch.setattr("app.services.history_sync.time.monotonic", lambda: 0.0)
+    first_rate = respx.get("https://api.frankfurter.dev/v1/2026-01-01").mock(
+        return_value=httpx.Response(200, json={"rates": {"GBP": 0.8}})
+    )
+    second_rate = respx.get("https://api.frankfurter.dev/v1/2026-01-11").mock(
+        return_value=httpx.Response(503)
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        sync_history(db_session, fake_client, target_currency="GBP", deadline=35.0)
+    assert db_session.query(OrderFill).count() == 0
+
+    second_rate.mock(return_value=httpx.Response(200, json={"rates": {"GBP": 0.8}}))
+    with Session(db_session.get_bind()) as reopened_session:
+        sync_history(reopened_session, fake_client, target_currency="GBP", deadline=35.0)
+        assert reopened_session.get(OrderFill, "101").fill_price == 80.0
+        assert reopened_session.get(OrderFill, "103").fill_price == 164.0
+        assert reopened_session.query(OrderFill).count() == 2
+
+    assert first_rate.call_count == 1
+    assert second_rate.call_count == 2
+
+
+@respx.mock
+def test_sync_order_fills_caches_fx_rates_separately_for_each_target_currency(db_session):
+    """Reusing a date's USD/GBP rate for USD/EUR would silently change P/L."""
+    gbp_rate = respx.get(
+        "https://api.frankfurter.dev/v1/2026-01-01", params={"base": "USD", "symbols": "GBP"}
+    ).mock(return_value=httpx.Response(200, json={"rates": {"GBP": 0.8}}))
+    eur_rate = respx.get(
+        "https://api.frankfurter.dev/v1/2026-01-01", params={"base": "USD", "symbols": "EUR"}
+    ).mock(return_value=httpx.Response(200, json={"rates": {"EUR": 0.9}}))
+    fake_client = MagicMock()
+    item = deepcopy(ORDER_PAGE_1["items"][0])
+    fake_client.get_historical_orders.return_value = {"items": [item], "nextPagePath": None}
+    assert sync_order_fills(db_session, fake_client, target_currency="GBP") == 1
+
+    eur_item = deepcopy(item)
+    eur_item["fill"]["id"] = 201
+    fake_client.get_historical_orders.return_value = {"items": [eur_item], "nextPagePath": None}
+    assert sync_order_fills(db_session, fake_client, target_currency="EUR") == 1
+
+    gbp_fill = db_session.get(OrderFill, "101")
+    eur_fill = db_session.get(OrderFill, "201")
+    assert (gbp_fill.fill_price, gbp_fill.net_value, gbp_fill.fees, gbp_fill.currency) == (
+        80.0,
+        800.0,
+        0.8,
+        "GBP",
+    )
+    assert (eur_fill.fill_price, eur_fill.net_value, eur_fill.fees, eur_fill.currency) == (
+        90.0,
+        900.0,
+        0.9,
+        "EUR",
+    )
+    assert gbp_rate.call_count == eur_rate.call_count == 1
+
+
+@respx.mock
+def test_sync_history_resumes_deferred_second_page_without_skipping_fills(db_session, monkeypatch):
+    """Preparing a later page retains the cursor after the preceding imported page."""
+    first_page = {"items": [ORDER_PAGE_1["items"][0]], "nextPagePath": "/orders?cursor=2"}
+    second_page = {"items": [], "nextPagePath": None}
+    for day in range(11, 15):
+        item = deepcopy(ORDER_PAGE_2["items"][0])
+        item["order"]["id"] = day
+        item["fill"]["id"] = day
+        item["fill"]["filledAt"] = f"2026-01-{day}T12:00:00Z"
+        second_page["items"].append(item)
+    fake_client = MagicMock()
+    fake_client.get_historical_orders.side_effect = [first_page, second_page, second_page]
+    fake_client.get_dividends.return_value = {"items": [], "nextPagePath": None}
+    elapsed = [0.0]
+    monkeypatch.setattr("app.services.history_sync.time.monotonic", lambda: elapsed[0])
+
+    def fx_response(request):
+        elapsed[0] += 9.0
+        return httpx.Response(200, json={"rates": {"GBP": 0.8}})
+
+    respx.get(url__regex=r"https://api\.frankfurter\.dev/v1/2026-01-\d{2}").mock(side_effect=fx_response)
+    sync_history(db_session, fake_client, target_currency="GBP", deadline=35.0)
+    assert {row.id for row in db_session.query(OrderFill)} == {"101"}
+    assert db_session.get(HistorySyncState, "orders").continuation_cursor == "2"
+
+    elapsed[0] = 0.0
+    with Session(db_session.get_bind()) as reopened_session:
+        sync_history(reopened_session, fake_client, target_currency="GBP", deadline=35.0)
+        assert {row.id for row in reopened_session.query(OrderFill)} == {"101", "11", "12", "13", "14"}
+        assert reopened_session.get(HistorySyncState, "orders").continuation_cursor is None
 
 
 def test_sync_history_marks_existing_history_as_backfilled(db_session):

@@ -92,6 +92,18 @@ class HistorySyncState(Base):
     continuation_cursor: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class HistoricalFxRate(Base):
+    """A historical conversion rate retained across history-sync runs and restarts."""
+
+    __tablename__ = "historical_fx_rates"
+
+    rate_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    from_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    to_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    # Preserve the existing float-based conversion arithmetic used for order fills.
+    rate: Mapped[float] = mapped_column(Float)
+
+
 class WatchlistEntry(Base):
     """A locally persisted, read-only reference to an Alpaca US equity."""
 
