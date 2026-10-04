@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import { conciseStockName, StockLogo } from "./WatchlistItem";
+import { StockAnalysisPane } from "./StockAnalysisPane";
 import type { ChartRange, StockChart, StockChartBar, WatchlistEntry, WatchlistPositionPrice } from "../lib/types";
 
 const RANGES: ChartRange[] = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
@@ -265,10 +266,7 @@ export function StockPriceChart({ assetId, range: controlledRange, compact = fal
           </div>
             {!compact && <ChartRangeSelector range={range} onChange={(nextRange) => { setError(null); setLocalRange(nextRange); }} />}
           </div>
-          {!compact && <aside aria-label="Stock analysis" className="mt-8 min-h-40 border-t border-neutral-800/80 pt-6 lg:mt-0 lg:min-h-[380px] lg:border-t-0 lg:border-l lg:pl-10 lg:pt-6">
-            <h2 className="text-sm font-semibold text-neutral-200">Analysis</h2>
-            <p className="mt-3 text-sm leading-6 text-neutral-500">Stock analysis will appear here.</p>
-          </aside>}
+          {!compact && <StockAnalysisPane key={assetId} assetId={assetId} />}
         </div>
       </div>
     </section>

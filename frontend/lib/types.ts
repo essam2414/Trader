@@ -272,3 +272,30 @@ export interface NewsRefreshResult {
   refreshedStories: number;
   failedSources: string[];
 }
+export interface AnalysisMetric {
+  id: string;
+  label: string;
+  value: number | null;
+  unit: "usd" | "percent" | "points" | "ratio" | "number";
+  basis: "daily" | "intraday";
+  condition: "supportive" | "neutral" | "caution" | "unavailable";
+  interpretation: string;
+  detail: string;
+  description: string;
+  relevance: string;
+  thresholds: string;
+}
+
+export interface StockAnalysis {
+  assetId: string;
+  symbol: string;
+  status: "loading" | "ready" | "partial" | "stale" | "unavailable";
+  dailyAsOf: string | null;
+  intradayAsOf: string | null;
+  calculatedAt: string | null;
+  nextRefreshAt: string | null;
+  delaySeconds: number;
+  historySessions: number;
+  message: string | null;
+  metrics: AnalysisMetric[];
+}

@@ -72,7 +72,7 @@ function useDialogKeyboard(onClose: () => void) {
   return dialogRef;
 }
 
-function NewsDetailDialog({ id, version, onClose }: { id: number; version?: string; onClose: () => void }) {
+export function NewsDetailDialog({ id, version, onClose }: { id: number; version?: string; onClose: () => void }) {
   const [detail, setDetail] = useState<CatalystDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogKeyboard(onClose);
