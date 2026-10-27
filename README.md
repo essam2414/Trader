@@ -65,14 +65,6 @@ flowchart LR
 | `backend/alembic/` | Database schema migrations |
 | `backend/tests/` and `frontend/**/__tests__/` | Backend and frontend regression coverage |
 
-The frontend proxy checks a signed, expiring session cookie created after PIN login. Server-side Next.js code forwards API requests to FastAPI and adds `DASHBOARD_API_KEY` as a bearer token. FastAPI checks that token before serving protected routes. Trading 212, Alpaca, Finnhub, OpenAI, and database credentials are loaded by the backend from its local environment; they are not sent to browser JavaScript. The PIN is currently fixed in the code, so it is only a convenience gate for a trusted local install.
-
-### Portfolio, history, and market data
-
-The dashboard fetches the account summary and open positions live from Trading 212. A short-lived backend cache reduces duplicate requests while the dashboard loads. APScheduler periodically stores portfolio value snapshots and imports order fills and dividends in resumable, paginated batches. The metrics service derives closed-trade performance, realised P&L, dividend income, drawdown, and related history views from the local records; it does not submit orders.
-
-Watchlist entries are stored locally. When Alpaca credentials are configured, the backend uses Alpaca market data for stock analysis and charts, persists historical price bars and corporate actions, and maintains market-data streams for watchlist symbols. The frontend requests charts and descriptive analysis through Next.js server routes. Watchlist ordering and trend preferences are stored in PostgreSQL as well.
-
 ### Source-backed AI news pipeline
 
 News is a central feature with a source collection and evidence-checking pipeline. Collection is scheduled for **08:55 and 20:30 America/New_York**. The backend also checks for missed runs after startup, retries pending summaries every five minutes, and persists source/run status so failures and queued work can be inspected.
