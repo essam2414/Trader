@@ -1,7 +1,6 @@
 """Evidence-bounded OpenAI analysis of one candidate watchlist story."""
 
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -13,6 +12,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..config import settings
 from ..models import WatchlistEntry
 from .news_ai_budget import DailyNewsTokenBudget
+from .news_novelty import NoveltyDecision, compare_developments
+from .news_numbers import unsupported_numbers
 from .news_sources import SourceItem
 
 Category = Literal[
@@ -50,10 +51,6 @@ class ModelAnalysis(BaseModel):
 class Evidence:
     item_id: int
     item: SourceItem
-
-
-def _numbers(value: str) -> set[str]:
-    return set(re.findall(r"(?<!\w)\$?\d+(?:[.,]\d+)?%?", value))
 
 
 def _published_sort_time(item: Evidence) -> datetime:
@@ -116,6 +113,8 @@ class OpenAINewsAnalyser:
         self.budget = budget or DailyNewsTokenBudget(settings.openai_news_daily_token_budget)
         self._disabled = False
         self._retry_after: datetime | None = None
+        self.last_failure_reason: str | None = None
+        self.last_failure_kind: str | None = None
 
     def available(self) -> bool:
         return bool(
@@ -126,13 +125,24 @@ class OpenAINewsAnalyser:
             and (self._retry_after is None or datetime.now(timezone.utc) >= self._retry_after)
         )
 
+    def compare_developments(self, incoming: dict, history: list[dict]) -> NoveltyDecision | None:
+        return compare_developments(self, incoming, history)
+
     def analyse(
         self,
         entries: list[WatchlistEntry],
         evidence: list[Evidence],
         exposures: dict[str, list[str]] | None = None,
     ) -> ModelAnalysis | None:
-        if not self.available() or not entries or not evidence:
+        self.last_failure_reason = None
+        self.last_failure_kind = None
+        if not self.available():
+            self.last_failure_kind = "temporary" if self._retry_after else "configuration"
+            self.last_failure_reason = "AI analysis unavailable or temporarily rate limited"
+            return None
+        if not entries or not evidence:
+            self.last_failure_kind = "validation"
+            self.last_failure_reason = "No watched stock or source evidence available"
             return None
         selected = sorted(
             evidence,
@@ -178,13 +188,42 @@ class OpenAINewsAnalyser:
         }
         if self.model == "gpt-5.4-mini":
             payload["reasoning"] = {"effort": "none"}
+        for attempt in range(2):
+            result = self._request(payload)
+            if result is None:
+                return None
+            failure = self._validate(result, entries, selected)
+            if failure is None:
+                self.last_failure_reason = None
+                self.last_failure_kind = None
+                return result
+            self.last_failure_kind = "validation"
+            self.last_failure_reason = failure
+            if attempt == 0:
+                payload = dict(
+                    payload,
+                    instructions=INSTRUCTIONS
+                    + (
+                        " Your previous response was rejected: "
+                        + failure
+                        + ". Regenerate using ONLY the original supplied evidence. Remove unsupported "
+                        "claims; preserve supported quantities, units, companies and attribution."
+                    ),
+                )
+        return None
+
+    def _request(self, payload: dict) -> ModelAnalysis | None:
         # UTF-8 bytes plus a large framing allowance conservatively exceed text token count.
         estimate = len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) + 1_200 + 900
         try:
             day = self.budget.reserve(estimate)
         except SQLAlchemyError:
+            self.last_failure_kind = "temporary"
+            self.last_failure_reason = "AI token budget store unavailable"
             return None
         if day is None:
+            self.last_failure_kind = "budget"
+            self.last_failure_reason = "Daily AI token budget exhausted"
             return None
         actual: int | None = None
         try:
@@ -210,6 +249,11 @@ class OpenAINewsAnalyser:
             if isinstance(usage.get("total_tokens"), int):
                 actual = usage["total_tokens"]
             if body.get("status") != "completed":
+                self.last_failure_kind = "temporary"
+                reason = (body.get("incomplete_details") or {}).get("reason")
+                self.last_failure_reason = (
+                    f"AI response incomplete: {reason}" if reason else "AI response did not complete"
+                )
                 return None
             content = next(
                 part["text"]
@@ -219,7 +263,16 @@ class OpenAINewsAnalyser:
                 if part.get("type") == "output_text"
             )
             result = ModelAnalysis.model_validate_json(content)
-        except (httpx.HTTPError, ValueError, KeyError, StopIteration, ValidationError):
+        except (httpx.HTTPError, ValueError, KeyError, StopIteration, ValidationError) as exc:
+            self.last_failure_kind = "temporary" if isinstance(exc, httpx.HTTPError) else "validation"
+            if isinstance(exc, httpx.HTTPStatusError):
+                if exc.response.status_code in {400, 401, 403, 404, 422}:
+                    self.last_failure_kind = "configuration"
+                self.last_failure_reason = f"AI request returned HTTP {exc.response.status_code}"
+            elif isinstance(exc, httpx.HTTPError):
+                self.last_failure_reason = "AI request failed or timed out"
+            else:
+                self.last_failure_reason = "AI response could not be validated"
             return None
         finally:
             try:
@@ -228,16 +281,25 @@ class OpenAINewsAnalyser:
                 # Keep the reservation rather than risk reusing an unknown amount.
                 pass
 
+        return result
+
+    def _validate(
+        self, result: ModelAnalysis, entries: list[WatchlistEntry], selected: list[Evidence]
+    ) -> str | None:
         valid_ids = {entry.alpaca_asset_id for entry in entries}
         source_ids = {item.item_id for item in selected}
         if not set(result.affectedAssetIds) <= valid_ids or not set(result.supportingSourceIds) <= source_ids:
-            return None
+            return "AI response referenced unsupported stock or source"
         if result.relevant and (not result.affectedAssetIds or not result.supportingSourceIds):
+            return "AI response omitted supporting stock or source"
+        if not result.relevant:
+            # Rejected articles are never published; do not hold them for summary repair.
             return None
         sourced_text = " ".join(
             f"{item.item.title} {item.item.excerpt} "
             f"{item.item.published_at.isoformat() if item.item.published_at else ''}"
             for item in selected
+            if item.item_id in result.supportingSourceIds
         )
         generated = " ".join(
             [
@@ -249,6 +311,7 @@ class OpenAINewsAnalyser:
                 *result.unknowns,
             ]
         )
-        if _numbers(generated) - _numbers(sourced_text):
-            return None
-        return result
+        missing = unsupported_numbers(generated, sourced_text)
+        if missing:
+            return "AI response contained numbers absent from sources: " + ", ".join(missing)[:300]
+        return None

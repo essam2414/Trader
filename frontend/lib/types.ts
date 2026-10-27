@@ -158,11 +158,28 @@ export interface StockChart {
   range: ChartRange;
   intervalSeconds: number;
   canonicalFeed: "sip";
-  adjustment: "raw";
+  adjustment: "split";
   canonicalThrough: string;
   delaySeconds: number;
   canonicalBars: StockChartBar[];
   provisionalIexBars: StockChartBar[];
+}
+
+export interface TrendsPreferences {
+  assetIds: string[];
+  range: Exclude<ChartRange, "1D">;
+  initialized: boolean;
+}
+
+export interface TrendRank {
+  assetId: string;
+  symbol: string;
+  status: "ready" | "insufficient_history" | "unavailable";
+  score: number | null;
+  weekTrendPercent: number | null;
+  monthRecoveryPercent: number | null;
+  risingSessions: number | null;
+  asOf: string | null;
 }
 
 export type MarketSessionPhase = "pre_market" | "regular" | "after_hours" | "overnight" | "closed";
@@ -185,6 +202,8 @@ export interface CatalystCard {
   direction: "upside" | "downside" | "unclear";
   status: "ready" | "pending";
   releasedAt: string | null;
+  releaseDatePrecision?: "minute" | "date" | null;
+  eventDate?: string | null;
   firstSeenAt: string;
   updatedAt: string;
 }
@@ -199,14 +218,30 @@ export interface CatalystDetail extends CatalystCard {
     provider: string;
     url: string;
     publishedAt: string | null;
+    dateStatus: string;
+    datePrecision?: "minute" | "date" | null;
+    eventDate?: string | null;
   }[];
 }
 
 export interface NewsStatus {
   lastSuccessfulRunAt: string | null;
+  lastAttemptAt: string | null;
+  lastRun?: { startedAt: string; attempted: number; succeeded: number; failed: number; skipped: number; newSourceItems?: number | null; newCards?: number | null } | null;
   failedSources: string[];
   sourceErrors: SourceError[];
   pendingSummaries: number;
+  unresolvedDevelopments?: number;
+  waitingSummaries?: number;
+  rejectedSummaries?: number;
+  checkingDevelopments?: number;
+  needsReview?: number;
+  pendingSummaryIssues: {
+    storyId: number; headline: string; reason: string; nextRetryAt: string | null;
+    queueStatus?: "waiting" | "validation" | "comparison" | "review";
+    attempts?: number;
+    sources?: CatalystDetail["sources"];
+  }[];
 }
 
 export interface SourceError {
@@ -245,4 +280,34 @@ export interface NewsRefreshResult {
   refreshedSources: number;
   refreshedStories: number;
   failedSources: string[];
+  analysisAttempted?: number;
+  analysisResolved?: number;
+  analysisRemaining?: number;
+}
+export interface AnalysisMetric {
+  id: string;
+  label: string;
+  value: number | null;
+  unit: "usd" | "percent" | "points" | "ratio" | "number";
+  basis: "daily" | "intraday";
+  condition: "supportive" | "neutral" | "caution" | "unavailable";
+  interpretation: string;
+  detail: string;
+  description: string;
+  relevance: string;
+  thresholds: string;
+}
+
+export interface StockAnalysis {
+  assetId: string;
+  symbol: string;
+  status: "loading" | "ready" | "partial" | "stale" | "unavailable";
+  dailyAsOf: string | null;
+  intradayAsOf: string | null;
+  calculatedAt: string | null;
+  nextRefreshAt: string | null;
+  delaySeconds: number;
+  historySessions: number;
+  message: string | null;
+  metrics: AnalysisMetric[];
 }

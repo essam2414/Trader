@@ -5,10 +5,10 @@ API response shapes and the stored PortfolioSnapshot rows, forming the
 frontend-facing JSON contract for the portfolio router.
 """
 
-from datetime import datetime
-from typing import Literal
+from datetime import date, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CashBreakdown(BaseModel):
@@ -174,11 +174,59 @@ class StockChartOut(BaseModel):
     range: Literal["1D", "1W", "1M", "3M", "1Y", "MAX"]
     intervalSeconds: int
     canonicalFeed: Literal["sip"]
-    adjustment: Literal["raw"]
+    adjustment: Literal["split"]
     canonicalThrough: datetime
     delaySeconds: int
     canonicalBars: list[StockChartBarOut]
     provisionalIexBars: list[StockChartBarOut]
+
+
+class AnalysisMetricOut(BaseModel):
+    id: str
+    label: str
+    value: float | None
+    unit: Literal["usd", "percent", "points", "ratio", "number"]
+    basis: Literal["daily", "intraday"]
+    condition: Literal["supportive", "neutral", "caution", "unavailable"]
+    interpretation: str
+    detail: str
+    description: str
+    relevance: str
+    thresholds: str
+
+
+class StockAnalysisOut(BaseModel):
+    assetId: str
+    symbol: str
+    status: Literal["loading", "ready", "partial", "stale", "unavailable"]
+    dailyAsOf: datetime | None = None
+    intradayAsOf: datetime | None = None
+    calculatedAt: datetime | None = None
+    nextRefreshAt: datetime | None = None
+    delaySeconds: int = 900
+    historySessions: int = 0
+    message: str | None = None
+    metrics: list[AnalysisMetricOut] = Field(default_factory=list)
+
+
+class TrendsPreferencesUpdate(BaseModel):
+    assetIds: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(max_length=50)
+    range: Literal["1W", "1M", "3M", "1Y", "MAX"]
+
+
+class TrendsPreferencesOut(TrendsPreferencesUpdate):
+    initialized: bool
+
+
+class TrendRankOut(BaseModel):
+    assetId: str
+    symbol: str
+    status: Literal["ready", "insufficient_history", "unavailable"]
+    score: float | None
+    weekTrendPercent: float | None
+    monthRecoveryPercent: float | None
+    risingSessions: int | None
+    asOf: datetime | None
 
 
 class MarketSessionOut(BaseModel):
@@ -199,6 +247,8 @@ class CatalystCardOut(BaseModel):
     direction: Literal["upside", "downside", "unclear"]
     status: str
     releasedAt: datetime | None
+    releaseDatePrecision: Literal["minute", "date"] | None = None
+    eventDate: date | None = None
     firstSeenAt: datetime
     updatedAt: datetime
 
@@ -208,6 +258,9 @@ class CatalystSourceOut(BaseModel):
     provider: str
     url: str
     publishedAt: datetime | None
+    dateStatus: str = "unverified"
+    datePrecision: Literal["minute", "date"] | None = None
+    eventDate: date | None = None
 
 
 class CatalystDetailOut(CatalystCardOut):
@@ -223,11 +276,39 @@ class SourceErrorOut(BaseModel):
     message: str
 
 
+class NewsRunOut(BaseModel):
+    startedAt: datetime
+    attempted: int
+    succeeded: int
+    failed: int
+    skipped: int
+    newSourceItems: int | None = None
+    newCards: int | None = None
+
+
+class PendingSummaryIssueOut(BaseModel):
+    storyId: int
+    headline: str
+    reason: str
+    nextRetryAt: datetime | None
+    queueStatus: Literal["waiting", "validation", "comparison", "review"] = "waiting"
+    attempts: int = 0
+    sources: list[CatalystSourceOut] = []
+
+
 class NewsStatusOut(BaseModel):
     lastSuccessfulRunAt: datetime | None
+    lastAttemptAt: datetime | None = None
     failedSources: list[str]
     sourceErrors: list[SourceErrorOut]
     pendingSummaries: int
+    unresolvedDevelopments: int = 0
+    waitingSummaries: int = 0
+    rejectedSummaries: int = 0
+    checkingDevelopments: int = 0
+    needsReview: int = 0
+    pendingSummaryIssues: list[PendingSummaryIssueOut]
+    lastRun: NewsRunOut | None = None
 
 
 class MarketEventOut(BaseModel):
@@ -261,3 +342,6 @@ class NewsRefreshOut(BaseModel):
     refreshedSources: int
     refreshedStories: int
     failedSources: list[str]
+    analysisAttempted: int = 0
+    analysisResolved: int = 0
+    analysisRemaining: int = 0

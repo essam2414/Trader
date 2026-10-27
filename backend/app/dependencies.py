@@ -15,6 +15,7 @@ from .alpaca_market_data import AlpacaMarketDataClient
 from .db import SessionLocal
 from .services.chart_data import ChartDataSource
 from .services.portfolio_current import PortfolioCurrentCache
+from .services.stock_analysis_data import StockAnalysisService
 from .trading212 import Trading212Client
 
 
@@ -50,6 +51,11 @@ def get_alpaca_delayed_sip_market_data_client(request: Request) -> AlpacaMarketD
 def get_chart_data_source(request: Request) -> ChartDataSource | None:
     """Return the on-demand chart data source, when Alpaca credentials are configured."""
     return request.app.state.chart_data_source
+
+
+def get_stock_analysis(request: Request) -> StockAnalysisService | None:
+    """Return the shared calendar-aware watchlist analysis module."""
+    return getattr(request.app.state, "stock_analysis", None)
 
 
 def get_alpaca_iex_trade_stream(request: Request) -> AlpacaIexTradeStream | None:

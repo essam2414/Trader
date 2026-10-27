@@ -238,27 +238,29 @@ class AlpacaMarketDataClient:
                     time.sleep(0.2 * (2**attempt))
         raise AlpacaUnavailableError("Company logos are temporarily unavailable") from last_error
 
+    def get_calendar_sessions(self, start: date, end: date) -> dict[date, TradingSession]:
+        """Return actual exchange sessions, including holidays and early closes."""
+        payload = self._request(
+            TRADING_BASE_URL, "/v2/calendar", {"start": start.isoformat(), "end": end.isoformat()}
+        )
+        return {
+            date.fromisoformat(session["date"]): TradingSession(
+                opens_at=datetime.combine(
+                    date.fromisoformat(session["date"]), clock_time.fromisoformat(session["open"]), NEW_YORK
+                ),
+                closes_at=datetime.combine(
+                    date.fromisoformat(session["date"]), clock_time.fromisoformat(session["close"]), NEW_YORK
+                ),
+            )
+            for session in payload
+        }
+
     def _load_calendar(self, around: date) -> dict[date, TradingSession]:
         if self._calendar_loaded_for == around:
             return self._calendar
         start = around - timedelta(days=14)
         end = around + timedelta(days=14)
-        payload = self._request(
-            TRADING_BASE_URL,
-            "/v2/calendar",
-            {"start": start.isoformat(), "end": end.isoformat()},
-        )
-        self._calendar = {}
-        for session in payload:
-            session_date = date.fromisoformat(session["date"])
-            self._calendar[session_date] = TradingSession(
-                opens_at=datetime.fromisoformat(f"{session['date']}T{session['open']}:00").replace(
-                    tzinfo=NEW_YORK
-                ),
-                closes_at=datetime.fromisoformat(f"{session['date']}T{session['close']}:00").replace(
-                    tzinfo=NEW_YORK
-                ),
-            )
+        self._calendar = self.get_calendar_sessions(start, end)
         self._calendar_loaded_for = around
         return self._calendar
 

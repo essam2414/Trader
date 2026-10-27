@@ -30,6 +30,30 @@ body {
   background: #737373;
 }
 
+.collection-error-scrollbar {
+  scrollbar-color: #9a3412 #262626;
+  scrollbar-width: thin;
+}
+
+.collection-error-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.collection-error-scrollbar::-webkit-scrollbar-track {
+  background: #262626;
+  border-radius: 9999px;
+}
+
+.collection-error-scrollbar::-webkit-scrollbar-thumb {
+  background: #9a3412;
+  border: 2px solid #262626;
+  border-radius: 9999px;
+}
+
+.collection-error-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #c2410c;
+}
+
 /* Recharts makes its SVG surface focusable for keyboard navigation. Price charts
    use a lightweight pointer tooltip instead, so the browser focus rectangle is
    distracting when a user clicks the plot. */

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import type { MarketEvent } from "../lib/types";
 
 type NavItem = {
   href: string;
@@ -10,6 +12,7 @@ type NavItem = {
 };
 
 const iconClassName = "h-[18px] w-[18px] shrink-0";
+const EVENT_POLL_INTERVAL_MS = 5 * 60_000;
 
 const navigation: NavItem[] = [
   {
@@ -61,6 +64,75 @@ function SidebarLink({ item, pathname }: { item: NavItem; pathname: string }) {
   );
 }
 
+function eventDateLabel(event: MarketEvent): string {
+  if (event.startsAt) {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+    }).format(new Date(event.startsAt));
+  }
+
+  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" }).format(
+    new Date(`${event.eventDate}T12:00:00Z`),
+  );
+}
+
+function nextUpcomingEvent(events: MarketEvent[]): MarketEvent | null {
+  return events
+    .filter((event) => event.dateStatus !== "cancelled")
+    .sort((left, right) => {
+      const dateComparison = left.eventDate.localeCompare(right.eventDate);
+      if (dateComparison !== 0) return dateComparison;
+      return (left.startsAt ?? "").localeCompare(right.startsAt ?? "");
+    })[0] ?? null;
+}
+
+function NextEventCard() {
+  const [nextEvent, setNextEvent] = useState<MarketEvent | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const load = async () => {
+      try {
+        const response = await fetch("/api/events", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("Events unavailable");
+        const events = await response.json() as MarketEvent[];
+        if (!controller.signal.aborted) {
+          setNextEvent(nextUpcomingEvent(events));
+        }
+      } catch {
+        // The dashboard remains the full source of event information if this compact summary is unavailable.
+      } finally {
+        if (!controller.signal.aborted) setHasLoaded(true);
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, EVENT_POLL_INTERVAL_MS);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  return (
+    <section
+      aria-label="Next event"
+      className={`rounded-xl border p-4 ${nextEvent?.category === "earnings" ? "border-orange-700/70 bg-orange-900/60" : "border-neutral-800 bg-neutral-900/50"}`}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Next event</p>
+      {!hasLoaded ? <div className="mt-3 h-9 animate-pulse rounded-md bg-neutral-800" /> : nextEvent ? <>
+        <h2 className="mt-2 break-words text-[13px] font-semibold leading-[18px] text-neutral-100">{nextEvent.title}</h2>
+        <p className="mt-2 text-[11px] leading-[17px] text-neutral-400">{eventDateLabel(nextEvent)}</p>
+      </> : <p className="mt-2 text-[13px] leading-[18px] text-neutral-500">No upcoming events</p>}
+    </section>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
 
@@ -76,11 +148,14 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      <nav className="-mx-5 mt-auto border-t border-neutral-800 px-5 pt-5" aria-label="Application settings">
-        <ul>
-          <SidebarLink item={settingsNavigation} pathname={pathname} />
-        </ul>
-      </nav>
+      <div className="mt-auto space-y-5">
+        <NextEventCard />
+        <nav className="-mx-5 border-t border-neutral-800 px-5 pt-5" aria-label="Application settings">
+          <ul>
+            <SidebarLink item={settingsNavigation} pathname={pathname} />
+          </ul>
+        </nav>
+      </div>
     </aside>
   );
 }

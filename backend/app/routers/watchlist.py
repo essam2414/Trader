@@ -24,14 +24,19 @@ from ..dependencies import (
     get_alpaca_market_data_client,
     get_chart_data_source,
     get_db,
+    get_stock_analysis,
     get_trading212_client,
 )
 from ..models import WatchlistEntry
 from ..scheduler import run_events_job, run_news_job
 from ..schemas import (
     SparklinePoint,
+    StockAnalysisOut,
     StockChartBarOut,
     StockChartOut,
+    TrendRankOut,
+    TrendsPreferencesOut,
+    TrendsPreferencesUpdate,
     WatchlistAdd,
     WatchlistEntryOut,
     WatchlistOrderUpdate,
@@ -39,7 +44,10 @@ from ..schemas import (
     WatchlistQuoteOut,
     WatchlistSearchResult,
 )
-from ..services.chart_data import CHART_RANGES, ChartDataSource, session_for
+from ..services.chart_data import CHART_ADJUSTMENT, CHART_RANGES, ChartDataSource, session_for
+from ..services.stock_analysis_data import StockAnalysisService, read_snapshot
+from ..services.trend_ranking import TREND_CHART_RANGE, calculate_trend, trend_sort_key
+from ..services.trends_preferences import load_preferences, save_preferences
 from ..services.watchlist import (
     WatchlistLimitError,
     add_entry,
@@ -477,6 +485,96 @@ def get_watchlist_position_price(
     return WatchlistPositionPriceOut(purchasePrice=price, purchasePriceCurrency=currency)
 
 
+@router.get("/watchlist/trends/preferences", response_model=TrendsPreferencesOut)
+def get_trends_preferences(db: Session = Depends(get_db)) -> TrendsPreferencesOut:
+    return load_preferences(db)
+
+
+@router.put("/watchlist/trends/preferences", response_model=TrendsPreferencesOut)
+def update_trends_preferences(
+    update: TrendsPreferencesUpdate,
+    initialize_only: bool = Query(default=False, alias="initializeOnly"),
+    db: Session = Depends(get_db),
+) -> TrendsPreferencesOut:
+    try:
+        return save_preferences(db, update, initialize_only=initialize_only)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/watchlist/trends/rank", response_model=list[TrendRankOut])
+def rank_watchlist_trends(
+    asset_ids: str = Query(alias="assetIds", min_length=1),
+    db: Session = Depends(get_db),
+    chart_data_source: ChartDataSource | None = Depends(get_chart_data_source),
+) -> list[TrendRankOut]:
+    """Rank selected watched stocks only when this read-only route is requested."""
+    ids = asset_ids.split(",")
+    if len(ids) > 50 or len(set(ids)) != len(ids) or any(not item or len(item) > 36 for item in ids):
+        raise HTTPException(status_code=400, detail="Invalid trend selection")
+    if chart_data_source is None:
+        raise HTTPException(status_code=503, detail="Alpaca chart data is not configured")
+
+    entries = db.query(WatchlistEntry).filter(WatchlistEntry.alpaca_asset_id.in_(ids)).all()
+    by_id = {entry.alpaca_asset_id: entry for entry in entries}
+    if len(by_id) != len(ids):
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+
+    now = datetime.now(timezone.utc)
+    ranked = []
+    for index, asset_id in enumerate(ids):
+        entry = by_id[asset_id]
+        try:
+            snapshot = chart_data_source.load_chart(
+                entry, TREND_CHART_RANGE, now, include_provisional_iex=False
+            )
+            metrics = calculate_trend(snapshot.canonical_bars, now)
+            status = "ready" if metrics is not None else "insufficient_history"
+        except AlpacaUnavailableError:
+            metrics = None
+            status = "unavailable"
+        ranked.append(
+            (
+                index,
+                metrics,
+                TrendRankOut(
+                    assetId=asset_id,
+                    symbol=entry.symbol,
+                    status=status,
+                    score=metrics.score if metrics else None,
+                    weekTrendPercent=metrics.week_trend_percent if metrics else None,
+                    monthRecoveryPercent=metrics.month_recovery_percent if metrics else None,
+                    risingSessions=metrics.rising_sessions if metrics else None,
+                    asOf=metrics.as_of if metrics else None,
+                ),
+            )
+        )
+    ranked.sort(key=lambda item: trend_sort_key(item[1], item[0]))
+    return [item[2] for item in ranked]
+
+
+@router.get("/watchlist/{asset_id}/analysis", response_model=StockAnalysisOut)
+def get_stock_analysis_snapshot(
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    analysis: StockAnalysisService | None = Depends(get_stock_analysis),
+) -> StockAnalysisOut:
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    now = datetime.now(timezone.utc)
+    result = read_snapshot(db, entry, now)
+    if analysis is None:
+        result.status = "stale" if result.metrics else "unavailable"
+        result.message = "Configure Alpaca market data to calculate stock analysis."
+    elif result.nextRefreshAt is None or result.nextRefreshAt <= now:
+        background_tasks.add_task(analysis.refresh_asset, asset_id)
+    return result
+
+
 @router.get("/watchlist/{asset_id}/chart", response_model=StockChartOut)
 def get_stock_chart(
     asset_id: str,
@@ -484,7 +582,7 @@ def get_stock_chart(
     db: Session = Depends(get_db),
     chart_data_source: ChartDataSource | None = Depends(get_chart_data_source),
 ) -> StockChartOut:
-    """Return on-demand delayed SIP history plus a visibly separate live IEX tail."""
+    """Return split-adjusted delayed SIP history plus a visibly separate live IEX tail."""
     entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="Watchlist entry not found")
@@ -515,7 +613,7 @@ def get_stock_chart(
         range=range,
         intervalSeconds=chart_range.output_interval_seconds,
         canonicalFeed="sip",
-        adjustment="raw",
+        adjustment=CHART_ADJUSTMENT,
         canonicalThrough=snapshot.canonical_through,
         delaySeconds=900,
         canonicalBars=[output(bar) for bar in snapshot.canonical_bars],
@@ -569,6 +667,7 @@ def add_watchlist_entry(
     client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
     stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
     delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
+    analysis: StockAnalysisService | None = Depends(get_stock_analysis),
 ) -> WatchlistEntryOut:
     market_data = require_alpaca(client)
     try:
@@ -578,6 +677,8 @@ def add_watchlist_entry(
     except LookupError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     sync_stream_symbols(db, stream, delayed_sip_stream)
+    if analysis is not None:
+        background_tasks.add_task(analysis.refresh_asset, entry.alpaca_asset_id)
     if settings.news_enabled:
         background_tasks.add_task(run_news_job)
         background_tasks.add_task(run_events_job)

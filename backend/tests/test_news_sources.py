@@ -12,6 +12,7 @@ from app.services.news_sources import (
     alpaca_items,
     bloom_energy_items,
     company_match,
+    configured_feeds,
     finnhub_items,
     form4_sale_details,
     gdelt_exposure_items,
@@ -20,6 +21,40 @@ from app.services.news_sources import (
     sec_items,
     spglobal_index_items,
 )
+
+
+def test_configured_feeds_keep_one_wire_feed_per_publisher_and_disable_bloom(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "news_ir_feeds_json",
+        '{"ir_be":"https://example.com/bloom", "ir_amd":"https://example.com/amd"}',
+    )
+    monkeypatch.setattr(settings, "news_rss_feeds_json", "{}")
+
+    feeds = configured_feeds()
+
+    assert set(feeds) == {"prnewswire", "globenewswire_public", "ir_amd"}
+
+
+def test_article_metadata_reads_structured_publication_time():
+    parser = ArticleMetadata()
+    parser.feed(
+        '<script type="application/ld+json">'
+        '{"@type":"NewsArticle","datePublished":"2026-09-22T11:39:00Z"}'
+        "</script>"
+    )
+    assert parser.verified_date() == datetime(2026, 9, 22, 11, 39, tzinfo=timezone.utc)
+
+
+def test_article_metadata_ignores_date_for_another_page():
+    parser = ArticleMetadata("https://publisher.example/current")
+    parser.feed(
+        '<script type="application/ld+json">'
+        '{"@type":"NewsArticle","url":"https://publisher.example/older",'
+        '"datePublished":"2026-09-22T11:39:00Z"}'
+        "</script>"
+    )
+    assert parser.verified_date() is None
 
 
 class FakeHttp:
@@ -154,6 +189,23 @@ def test_alpaca_pages_until_exhaustion_and_keeps_original_creation_time(monkeypa
     assert [item.key for item in items] == ["1", "2"]
     assert http.calls[1][1]["params"]["page_token"] == "page2"
     assert items[0].published_at == datetime(2026, 9, 24, 20, tzinfo=timezone.utc)
+
+
+def test_alpaca_paginates_each_watched_symbol_independently(monkeypatch):
+    monkeypatch.setattr(settings, "alpaca_api_key", "test")
+    monkeypatch.setattr(settings, "alpaca_api_secret", "test")
+    http = FakeHttp(
+        [
+            {"news": [{"id": 1, "url": "https://example.com/a", "headline": "AAPL earnings"}]},
+            {"news": [{"id": 2, "url": "https://example.com/b", "headline": "MSFT earnings"}]},
+        ]
+    )
+    now = datetime(2026, 9, 27, tzinfo=timezone.utc)
+
+    items = alpaca_items(http, ["AAPL", "MSFT"], now, now)
+
+    assert len(items) == 2
+    assert [call[1]["params"]["symbols"] for call in http.calls] == ["AAPL", "MSFT"]
 
 
 def test_geopolitical_discovery_is_limited_to_configured_exposures():

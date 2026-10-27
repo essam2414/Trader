@@ -1,0 +1,51 @@
+- generic [active] [ref=f7e1]:
+  - generic [ref=f7e2]:
+    - complementary [ref=f7e3]:
+      - link "Invest account" [ref=f7e4] [cursor=pointer]:
+        - /url: /
+        - text: Invest
+      - navigation "Main navigation" [ref=f7e5]:
+        - list [ref=f7e6]:
+          - listitem [ref=f7e7]:
+            - link "Dashboard" [ref=f7e8] [cursor=pointer]:
+              - /url: /dashboard
+          - listitem [ref=f7e11]:
+            - link "Trends" [ref=f7e12] [cursor=pointer]:
+              - /url: /trends
+          - listitem [ref=f7e15]:
+            - link "History" [ref=f7e16] [cursor=pointer]:
+              - /url: /history
+          - listitem [ref=f7e20]:
+            - link "Account" [ref=f7e21] [cursor=pointer]:
+              - /url: /account
+      - generic [ref=f7e25]:
+        - region "Next event" [ref=f7e26]:
+          - paragraph [ref=f7e27]: Next event
+        - navigation "Application settings" [ref=f7e29]:
+          - list [ref=f7e30]:
+            - listitem [ref=f7e31]:
+              - link "Settings" [ref=f7e32] [cursor=pointer]:
+                - /url: /settings
+    - main [ref=f7e37]:
+      - region "Stock price chart" [ref=f7e38]:
+        - generic [ref=f7e39]:
+          - group "Stock overview" [ref=f7e40]:
+            - paragraph [ref=f7e42]: —
+          - generic [ref=f7e44]:
+            - generic [ref=f7e45]:
+              - generic [ref=f7e46]: Loading price history…
+              - navigation "Chart range" [ref=f7e48]:
+                - button "1D" [pressed] [ref=f7e49]
+                - button "1W" [ref=f7e50]
+                - button "1M" [ref=f7e51]
+                - button "3M" [ref=f7e52]
+                - button "1Y" [ref=f7e53]
+                - button "MAX" [ref=f7e54]
+            - complementary "Stock analysis" [ref=f7e55]:
+              - tablist "Stock analysis and news" [ref=f7e56]:
+                - tab "Analysis" [selected] [ref=f7e57]
+                - tab "News" [ref=f7e58]
+              - tabpanel "Analysis" [ref=f7e59]:
+                - paragraph [ref=f7e61]: Swing outlook · 2–10 trading days
+                - status [ref=f7e63]: Loading analysis…
+  - button "Open Next.js Dev Tools" [ref=f7e69] [cursor=pointer]

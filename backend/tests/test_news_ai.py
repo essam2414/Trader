@@ -4,6 +4,7 @@ import json
 from datetime import date, datetime, timezone
 
 import httpx
+import pytest
 
 from app.config import settings
 from app.models import NewsAiDailyUsage, WatchlistEntry
@@ -202,3 +203,127 @@ def test_model_receives_every_source_and_full_collected_excerpt(monkeypatch):
     sources = json.loads(payloads[0]["input"])["sources"]
     assert {source["id"] for source in sources} == set(range(1, 11))
     assert all(len(source["excerpt"]) > 1600 for source in sources)
+
+
+@pytest.mark.parametrize(
+    "source,summary,accepted",
+    [
+        ("Sales $60.000B-$63.000B", "Sales $60B to $63B", True),
+        ("Sold 8437 shares at 277.17 per share", "Sold 8,437 shares at $277.17 per share", True),
+        ("Sales $60 billion", "Sales $60,000 million", True),
+        ("Sales $60B", "Sales $60M", False),
+        ("Sales $60B", "Sales EUR60B", False),
+        ("Sales $60B", "Sales JPY60B", False),
+        ("Filed Form 4", "Sold 4 shares", False),
+        ("Growth 10%", "Growth 10", False),
+        ("Sales $60B", "Sales $63B", False),
+        ("Sales $60 billion-$63 billion", "Sales $60B to $63B", True),
+        ("EPS $-5", "EPS $5", False),
+        ("Q1 FY28 guidance", "Q2 FY28 guidance", False),
+        ("Q1 FY28 guidance", "Q1 FY29 guidance", False),
+        ("Second quarter of fiscal year 2027", "Q2 FY27", True),
+        ("Growth 10% on 2026-10-06T13:31:57Z", "Growth 10", False),
+        ("Released 2026-10-06T13:31:57Z", "Released 2026-10-07", False),
+        ("Released 2026-10-06T13:31:57Z", "Released 2026-10-06T13:34:57Z", False),
+    ],
+)
+def test_numeric_validation_preserves_values_currency_and_units(monkeypatch, source, summary, accepted):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
+    item = evidence[0].item
+    evidence = [Evidence(4, SourceItem(item.provider, item.key, item.url, item.title, source, None))]
+    result["detailSummary"] = summary
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(kwargs["json"])
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "status": "completed",
+                "usage": {"total_tokens": 100},
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}
+                ],
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    analyser = OpenAINewsAnalyser(budget=FakeBudget())
+    assert (analyser.analyse([entry], evidence) is not None) == accepted
+    assert len(calls) == (1 if accepted else 2)
+    if not accepted:
+        assert analyser.last_failure_kind == "validation"
+
+
+def test_numeric_correction_is_bounded_and_uses_original_evidence(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
+    payloads = []
+
+    def post(url, **kwargs):
+        payloads.append(kwargs["json"].copy())
+        output = dict(result, detailSummary="Contract worth $99B") if len(payloads) == 1 else result
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "status": "completed",
+                "usage": {"total_tokens": 100},
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(output)}]}
+                ],
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    budget = FakeBudget()
+    assert OpenAINewsAnalyser(budget=budget).analyse([entry], evidence)
+    assert len(payloads) == len(budget.settled) == 2
+    assert payloads[0]["input"] == payloads[1]["input"]
+    assert "unsupported" in payloads[1]["instructions"]
+
+
+@pytest.mark.parametrize("relevant,accepted", [(True, False), (False, True)])
+def test_uncited_numbers_cannot_support_publication_but_irrelevant_articles_can_leave_queue(
+    monkeypatch, relevant, accepted
+):
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_news_enabled", True)
+    entry, evidence, result = _inputs()
+    evidence.append(
+        Evidence(
+            5,
+            SourceItem(
+                "publisher",
+                "other",
+                "https://example.com/other",
+                "Other company contract worth $99B",
+                "",
+                None,
+            ),
+        )
+    )
+    result["detailSummary"] = "Contract worth $99B"
+    result["relevant"] = relevant
+    if not relevant:
+        result["affectedAssetIds"] = []
+        result["supportingSourceIds"] = []
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **kwargs: httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "status": "completed",
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}
+                ],
+            },
+        ),
+    )
+    assert (OpenAINewsAnalyser(budget=FakeBudget()).analyse([entry], evidence) is not None) == accepted

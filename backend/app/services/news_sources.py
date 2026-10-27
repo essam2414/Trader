@@ -7,7 +7,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -30,6 +30,36 @@ class SourceItem:
     excerpt: str
     published_at: datetime | None
     symbols: tuple[str, ...] = ()
+    date_status: str = "unverified"
+    published_date_precision: str = "minute"
+    event_date: date | None = None
+
+
+@dataclass(frozen=True)
+class ArticleMetadataResult:
+    description: str
+    published_at: datetime | None
+    status: str
+    date_precision: str | None = None
+    event_date: date | None = None
+
+
+def _is_date_only(value: str | None) -> bool:
+    return bool(value and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()))
+
+
+def date_precision(value: str | None) -> str:
+    if _is_date_only(value):
+        return "date"
+    if value and re.search(r"\d{1,2}:\d{2}|\b(?:am|pm)\b", value, re.I):
+        return "minute"
+    return "date" if value else "minute"
+
+
+_MONTH_NAMES = (
+    r"January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|"
+    r"September|Sep|October|Oct|November|Nov|December|Dec"
+)
 
 
 class TextExtractor(HTMLParser):
@@ -52,21 +82,189 @@ class TextExtractor(HTMLParser):
 
 
 class ArticleMetadata(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, url: str = "") -> None:
         super().__init__()
         self.description = ""
         self.published = None
+        self.published_precision: str | None = None
+        self.published_status = "date_missing"
+        self.url = canonical_url(url)
+        self._json_ld = False
+        self._json_chunks: list[str] = []
+        self._structured_dates: list[tuple[datetime, str]] = []
+        self._body_parts: list[str] = []
+        self._skip_body_text = 0
+        self._body_length = 0
+        self._event_date: date | None = None
+
+    def _set_published(self, value: str | None, status: str) -> None:
+        published = parse_date(value)
+        if published is not None and self.published is None:
+            self.published = published
+            self.published_precision = date_precision(value)
+            self.published_status = status
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "script" and values.get("type") == "application/ld+json":
+            self._json_ld = True
+            self._json_chunks = []
+        if tag in {"script", "style"}:
+            self._skip_body_text += 1
+        if tag == "time" and values.get("itemprop") == "datePublished":
+            self._set_published(values.get("datetime"), "verified")
         if tag != "meta":
             return
-        values = dict(attrs)
         key = (values.get("property") or values.get("name") or "").lower()
         content = (values.get("content") or "").strip()
         if key in {"og:description", "description", "twitter:description"} and not self.description:
             self.description = plain_text(content, 1200)
-        if key in {"article:published_time", "datepublished", "pubdate"} and not self.published:
-            self.published = parse_date(content)
+        if (
+            key
+            in {
+                "article:published_time",
+                "datepublished",
+                "pubdate",
+                "parsely-pub-date",
+                "dc.date",
+                "dc.date.issued",
+            }
+            and not self.published
+        ):
+            self._set_published(content, "verified")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"} and self._skip_body_text:
+            self._skip_body_text -= 1
+        if tag == "script" and self._json_ld:
+            try:
+                document = json.loads("".join(self._json_chunks))
+            except (TypeError, ValueError):
+                document = None
+            self._collect_dates(document)
+            self._json_ld = False
+            self._json_chunks = []
+
+    def handle_data(self, data: str) -> None:
+        if self._json_ld:
+            self._json_chunks.append(data)
+        elif not self._skip_body_text and self._body_length < 100_000:
+            self._body_parts.append(data)
+            self._body_length += len(data)
+
+    def _collect_dates(self, value: object, depth: int = 0) -> None:
+        if depth > 5:
+            return
+        if isinstance(value, list):
+            for child in value[:20]:
+                self._collect_dates(child, depth + 1)
+        elif isinstance(value, dict):
+            kinds = value.get("@type")
+            kinds = [kinds] if isinstance(kinds, str) else kinds
+            if isinstance(kinds, list) and any(
+                kind in {"NewsArticle", "Article", "BlogPosting", "ReportageNewsArticle"} for kind in kinds
+            ):
+                page = value.get("url") or value.get("mainEntityOfPage")
+                if isinstance(page, dict):
+                    page = page.get("@id") or page.get("url")
+                if not self.url or not page or canonical_url(str(page)) == self.url:
+                    raw_date = value.get("datePublished")
+                    published = parse_date(raw_date) if isinstance(raw_date, str) else None
+                    if published:
+                        self._structured_dates.append((published, date_precision(raw_date)))
+            for child in list(value.values())[:30]:
+                if isinstance(child, (dict, list)):
+                    self._collect_dates(child, depth + 1)
+
+    def verified_date(self) -> datetime | None:
+        if self.published:
+            return self.published
+        if self._structured_dates:
+            self.published_precision = self._structured_dates[0][1]
+            self.published_status = "verified"
+            return self._structured_dates[0][0]
+        body_published = self._body_published_date()
+        if body_published:
+            self.published_precision = date_precision(body_published[0])
+            self.published_status = "body_text_published_date"
+            return body_published[1]
+        return None
+
+    def body_event_date(self) -> date | None:
+        if self._event_date is not None:
+            return self._event_date
+        body = re.sub(r"\s+", " ", " ".join(self._body_parts))
+        date_text = (
+            r"(?:\d{4}-\d{2}-\d{2}|"
+            rf"(?:{_MONTH_NAMES})\s+\d{{1,2}},?\s+\d{{4}}|"
+            rf"\d{{1,2}}\s+(?:{_MONTH_NAMES})\s+\d{{4}})"
+        )
+        event_action = re.compile(
+            r"\b(?:rais\w*|increas\w*|boost\w*|lift\w*|cut\w*|lower\w*|reduc\w*|"
+            r"announc\w*|report\w*|fil\w*|sign\w*|agre\w*|approv\w*|reject\w*|"
+            r"acquir\w*|award\w*|launch\w*|win\w*)\b",
+            re.I,
+        )
+        date_cue = re.compile(rf"\b(?:on|as of|dated)\s+(?P<date>{date_text})", re.I)
+        for sentence in re.split(r"(?<=[.!?])\s+", body):
+            lower = sentence.lower()
+            if "published" in lower or "updated" in lower or not event_action.search(sentence):
+                continue
+            if re.search(r"\b(?:will|would|expected|scheduled|plans to|set to)\b", lower):
+                continue
+            match = date_cue.search(sentence)
+            if not match:
+                continue
+            parsed = parse_date(match.group("date"))
+            if parsed is None:
+                for date_format in (
+                    "%B %d, %Y",
+                    "%b %d, %Y",
+                    "%B %d %Y",
+                    "%b %d %Y",
+                    "%d %B %Y",
+                    "%d %b %Y",
+                ):
+                    try:
+                        parsed = datetime.strptime(match.group("date"), date_format).replace(
+                            tzinfo=timezone.utc
+                        )
+                        break
+                    except ValueError:
+                        continue
+            if parsed:
+                self._event_date = parsed.date()
+                return self._event_date
+        return None
+
+    def _body_published_date(self) -> tuple[str, datetime] | None:
+        body = re.sub(r"\s+", " ", " ".join(self._body_parts))
+        labelled = re.compile(
+            r"\b(?:originally\s+)?published(?:\s+on)?\s*[:\-]?\s*"
+            r"(?P<date>(?:\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+\-Z]+)?)|"
+            rf"(?:{_MONTH_NAMES})\s+\d{{1,2}},?\s+\d{{4}}|"
+            rf"\d{{1,2}}\s+(?:{_MONTH_NAMES})\s+\d{{4}})",
+            re.I,
+        )
+        for match in labelled.finditer(body):
+            value = match.group("date").strip()
+            parsed = parse_date(value)
+            if parsed:
+                return value, parsed
+            for date_format in (
+                "%B %d, %Y",
+                "%b %d, %Y",
+                "%B %d %Y",
+                "%b %d %Y",
+                "%d %B %Y",
+                "%d %b %Y",
+            ):
+                try:
+                    parsed = datetime.strptime(value, date_format).replace(tzinfo=timezone.utc)
+                    return value, parsed
+                except ValueError:
+                    continue
+        return None
 
 
 def plain_text(value: str, limit: int = 6000) -> str:
@@ -92,6 +290,8 @@ def parse_date(value: str | None) -> datetime | None:
     try:
         if re.fullmatch(r"\d{14}", value):
             return datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        if _is_date_only(value):
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if value.endswith("Z"):
             value = value[:-1] + "+00:00"
         result = datetime.fromisoformat(value)
@@ -159,6 +359,7 @@ class NewsHttp:
         )
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_sec_request = 0.0
+        self._last_gdelt_request = 0.0
 
     def get(self, url: str, **kwargs: object) -> httpx.Response:
         for attempt in range(3):
@@ -168,6 +369,11 @@ class NewsHttp:
                 if delay > 0:
                     time.sleep(delay)
                 self._last_sec_request = time.monotonic()
+            if host == "api.gdeltproject.org":
+                delay = 1.5 - (time.monotonic() - self._last_gdelt_request)
+                if delay > 0:
+                    time.sleep(delay)
+                self._last_gdelt_request = time.monotonic()
             try:
                 response = self.client.get(url, **kwargs)
             except httpx.TransportError:
@@ -175,7 +381,10 @@ class NewsHttp:
                     raise
                 time.sleep(attempt + 1)
                 continue
-            if response.status_code in {429, 502, 503, 504} and attempt < 2:
+            # A 429 needs provider-wide cooldown, not three immediate requests.
+            if response.status_code == 429:
+                response.raise_for_status()
+            if response.status_code in {502, 503, 504} and attempt < 2:
                 retry_after = response.headers.get("retry-after", "")
                 if retry_after.isdigit() and int(retry_after) > 5:
                     response.raise_for_status()
@@ -222,11 +431,13 @@ class NewsHttp:
         parser = self._robots[origin]
         return parser is None or parser.can_fetch("TraderWatchlistNews", url)
 
-    def article_metadata(self, url: str) -> tuple[str, datetime | None]:
+    def article_metadata_result(self, url: str) -> ArticleMetadataResult:
         """Read bounded public publisher metadata without retaining the article body."""
         for _ in range(3):
-            if not self._public_host(url) or not self._robots_allow(url):
-                return "", None
+            if not self._public_host(url):
+                return ArticleMetadataResult("", None, "unsafe_or_unreachable_host")
+            if not self._robots_allow(url):
+                return ArticleMetadataResult("", None, "robots_unavailable_or_disallowed")
             try:
                 with self.client.stream("GET", url, timeout=5, follow_redirects=False) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
@@ -235,18 +446,29 @@ class NewsHttp:
                     if response.status_code != 200 or "text/html" not in response.headers.get(
                         "content-type", ""
                     ):
-                        return "", None
+                        return ArticleMetadataResult("", None, f"http_{response.status_code}")
                     data = bytearray()
                     for chunk in response.iter_bytes():
                         data.extend(chunk)
                         if len(data) >= 250_000:
                             break
-                    metadata = ArticleMetadata()
+                    metadata = ArticleMetadata(url)
                     metadata.feed(data.decode("utf-8", errors="ignore"))
-                    return metadata.description, metadata.published
+                    published = metadata.verified_date()
+                    return ArticleMetadataResult(
+                        metadata.description,
+                        published,
+                        metadata.published_status if published else "date_missing",
+                        metadata.published_precision,
+                        metadata.body_event_date(),
+                    )
             except (httpx.HTTPError, ValueError):
-                return "", None
-        return "", None
+                return ArticleMetadataResult("", None, "fetch_failed")
+        return ArticleMetadataResult("", None, "redirect_limit")
+
+    def article_metadata(self, url: str) -> tuple[str, datetime | None]:
+        result = self.article_metadata_result(url)
+        return result.description, result.published_at
 
 
 def gdelt_items(
@@ -321,10 +543,13 @@ def gdelt_exposure_items(
     exposures: dict[str, list[str]],
     since: datetime,
     until: datetime,
+    selected_tag: str | None = None,
 ) -> list[SourceItem]:
     """Find indirect developments only for explicitly configured exposure tags."""
     items: list[SourceItem] = []
     for tag, query in EXPOSURE_QUERIES.items():
+        if selected_tag is not None and tag != selected_tag:
+            continue
         symbols = tuple(entry.symbol for entry in entries if tag in exposures.get(entry.symbol.upper(), []))
         if not symbols:
             continue
@@ -356,45 +581,46 @@ def alpaca_items(http: NewsHttp, symbols: list[str], since: datetime, until: dat
     if not settings.alpaca_api_key or not settings.alpaca_api_secret or not symbols:
         return []
     items: list[SourceItem] = []
-    token: str | None = None
-    for _ in range(10):
-        params = {
-            "symbols": ",".join(symbols),
-            "start": since.isoformat(),
-            "end": until.isoformat(),
-            "limit": 50,
-            "sort": "desc",
-            "include_content": "true",
-        }
-        if token:
-            params["page_token"] = token
-        response = http.get(
-            "https://data.alpaca.markets/v1beta1/news",
-            params=params,
-            headers={
-                "APCA-API-KEY-ID": settings.alpaca_api_key,
-                "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
-            },
-        )
-        payload = response.json()
-        for raw in payload.get("news", []):
-            url = canonical_url(str(raw.get("url", "")))
-            if not url:
-                continue
-            items.append(
-                SourceItem(
-                    "alpaca",
-                    source_key("alpaca", url, str(raw.get("id", ""))),
-                    url,
-                    str(raw.get("headline", ""))[:500],
-                    plain_text(str(raw.get("content") or raw.get("summary") or "")),
-                    parse_date(raw.get("created_at")),
-                    tuple(str(symbol).upper() for symbol in raw.get("symbols", [])),
-                )
+    for symbol in symbols:
+        token: str | None = None
+        for _ in range(10):
+            params = {
+                "symbols": symbol,
+                "start": since.isoformat(),
+                "end": until.isoformat(),
+                "limit": 50,
+                "sort": "desc",
+                "include_content": "true",
+            }
+            if token:
+                params["page_token"] = token
+            response = http.get(
+                "https://data.alpaca.markets/v1beta1/news",
+                params=params,
+                headers={
+                    "APCA-API-KEY-ID": settings.alpaca_api_key,
+                    "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
+                },
             )
-        token = payload.get("next_page_token")
-        if not token:
-            break
+            payload = response.json()
+            for raw in payload.get("news", []):
+                url = canonical_url(str(raw.get("url", "")))
+                if not url:
+                    continue
+                items.append(
+                    SourceItem(
+                        "alpaca",
+                        source_key("alpaca", url, str(raw.get("id", ""))),
+                        url,
+                        str(raw.get("headline", ""))[:500],
+                        plain_text(str(raw.get("content") or raw.get("summary") or "")),
+                        parse_date(raw.get("created_at")),
+                        tuple(str(value).upper() for value in raw.get("symbols", [])),
+                    )
+                )
+            token = payload.get("next_page_token")
+            if not token:
+                break
     return items
 
 
@@ -687,22 +913,6 @@ def configured_feeds() -> dict[str, str]:
             "https://www.globenewswire.com/RssFeed/orgclass/1/"
             "feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
         ),
-        "globenewswire_analyst": (
-            "https://www.globenewswire.com/RssFeed/subjectcode/3-Analyst%20Recommendations/"
-            "feedTitle/GlobeNewswire%20-%20Analyst%20Recommendations"
-        ),
-        "globenewswire_contracts": (
-            "https://www.globenewswire.com/RssFeed/subjectcode/7-Business%20Contracts/"
-            "feedTitle/GlobeNewswire%20-%20Business%20Contracts"
-        ),
-        "globenewswire_earnings": (
-            "https://www.globenewswire.com/RssFeed/subjectcode/13-Earnings%20Releases%20and%20Operating%20Results/"
-            "feedTitle/GlobeNewswire%20-%20Earnings%20Releases%20and%20Operating%20Results"
-        ),
-        "globenewswire_mna": (
-            "https://www.globenewswire.com/RssFeed/subjectcode/27-Mergers%20and%20Acquisitions/"
-            "feedTitle/GlobeNewswire%20-%20Mergers%20and%20Acquisitions"
-        ),
     }
     for raw in (settings.news_rss_feeds_json, settings.news_ir_feeds_json):
         try:
@@ -717,4 +927,11 @@ def configured_feeds() -> dict[str, str]:
                     if len(str(key)) <= 40 and canonical_url(str(url))
                 }
             )
-    return feeds
+    # These GlobeNewswire topic feeds repeat the public-company feed. Bloom's
+    # investor feed and newsroom both reject automated requests at present.
+    return {
+        provider: url
+        for provider, url in feeds.items()
+        if provider == "globenewswire_public"
+        or (provider != "ir_be" and not provider.startswith("globenewswire_"))
+    }

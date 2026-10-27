@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -92,6 +93,18 @@ class HistorySyncState(Base):
     continuation_cursor: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class HistoricalFxRate(Base):
+    """A historical conversion rate retained across history-sync runs and restarts."""
+
+    __tablename__ = "historical_fx_rates"
+
+    rate_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    from_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    to_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    # Preserve the existing float-based conversion arithmetic used for order fills.
+    rate: Mapped[float] = mapped_column(Float)
+
+
 class WatchlistEntry(Base):
     """A locally persisted, read-only reference to an Alpaca US equity."""
 
@@ -111,6 +124,27 @@ class WatchlistEntry(Base):
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
+
+
+class TrendsPreferences(Base):
+    """One shared Trends layout for this local application."""
+
+    __tablename__ = "trends_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    chart_range: Mapped[str] = mapped_column(String(3), nullable=False, default="1W")
+
+
+class StockAnalysisSnapshot(Base):
+    """Latest derived analysis, retained across restarts and temporary data failures."""
+
+    __tablename__ = "stock_analysis_snapshots"
+
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    next_refresh_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class MarketPriceBar(Base):
@@ -201,6 +235,9 @@ class NewsSourceItem(Base):
     excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     candidate_symbols: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    date_status: Mapped[str] = mapped_column(String(48), nullable=False, default="unverified")
+    published_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -222,9 +259,38 @@ class NewsStory(Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False, default="unclear")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_date_precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    merged_into_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    event_descriptor: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+    identity_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    summary_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    related_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class NewsEventIdentity(Base):
+    """Durable aliases: several source-backed descriptions may identify one development."""
+
+    __tablename__ = "news_event_identities"
+    event_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), nullable=False, index=True)
+
+
+class NewsResolutionDecision(Base):
+    """Audit the evidence and rule version behind each publication or suppression decision."""
+
+    __tablename__ = "news_resolution_decisions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("news_stories.id"), nullable=False, index=True)
+    matched_story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class NewsStorySource(Base):
@@ -273,6 +339,39 @@ class NewsSyncState(Base):
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_outcome: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    failure_kind: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    analysis_input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class NewsComparisonCache(Base):
+    """Successful coverage batches, invalidated by complete context/model/rule hashes."""
+
+    __tablename__ = "news_comparison_cache"
+
+    input_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    decision: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class NewsCollectionRun(Base):
+    """Outcome of one scheduled or manual watchlist news collection."""
+
+    __tablename__ = "news_collection_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempted_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_source_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_card_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    failed_sources: Mapped[list] = mapped_column(JSON, nullable=False)
+    skipped_sources: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
 class NewsAiDailyUsage(Base):

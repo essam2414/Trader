@@ -6,20 +6,33 @@ subsequent jobs inspect only the newest rate-limit-safe window and upsert by
 id, skipping rows already stored.
 """
 
-from datetime import datetime
+import time
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 from sqlalchemy.orm import Session
 
-from ..fx import get_historical_rate
-from ..models import Dividend, HistorySyncState, OrderFill
+from ..fx import HISTORICAL_RATE_TIMEOUT_SECONDS, get_historical_rate
+from ..models import Dividend, HistoricalFxRate, HistorySyncState, OrderFill
 from ..trading212 import Trading212Client
 
 HISTORY_PAGE_SIZE = 50
-MAX_RECENT_HISTORY_PAGES = 6
-NATIVE_PRICE_BACKFILL_PAGES = 5
+MAX_HISTORY_PAGES_PER_RUN = 3
+ORDER_HISTORY_PAGES_PER_RUN = 2
+HISTORY_SYNC_TIME_BUDGET_SECONDS = 35.0
 NATIVE_PRICE_BACKFILL_SOURCE = "native_prices"
+
+
+@dataclass(frozen=True)
+class HistoryPageBatch:
+    """The persisted progress made while reading one history source."""
+
+    added: int
+    pages_fetched: int
+    next_cursor: int | None
+    reached_existing_item: bool
 
 
 def _extract_cursor(next_page_path: str | None) -> int | None:
@@ -53,14 +66,69 @@ def sync_order_fills(
     trusted from the raw `price` field. The raw price and its instrument
     currency are retained separately for display in trade history.
     """
+    return _sync_order_fill_pages(
+        session,
+        client,
+        target_currency,
+        cursor=None,
+        max_pages=max_pages,
+        stop_when_existing=False,
+        deadline=None,
+    ).added
+
+
+def _sync_order_fill_pages(
+    session: Session,
+    client: Trading212Client,
+    target_currency: str,
+    *,
+    cursor: int | None,
+    max_pages: int | None,
+    stop_when_existing: bool,
+    deadline: float | None,
+) -> HistoryPageBatch:
+    """Read bounded order pages, saving FX progress before committing complete pages.
+
+    When catching up, the first previously stored fill proves that all older
+    pages were imported by an earlier completed run. The caller then clears
+    the saved continuation cursor. FX rates are durable so a page spanning
+    many trading dates can be prepared over multiple runs without stalling.
+    """
     existing_fills = {row.id: row for row in session.query(OrderFill).all()}
-    rate_cache: dict[tuple[str, str], float] = {}
+    rate_cache = {
+        (row.rate_date.isoformat(), row.from_currency): row.rate
+        for row in session.query(HistoricalFxRate).filter(HistoricalFxRate.to_currency == target_currency)
+    }
     added = 0
-    cursor: int | None = None
     pages_fetched = 0
+    reached_existing_item = False
+    next_cursor = cursor
     while max_pages is None or pages_fetched < max_pages:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         page = client.get_historical_orders(cursor=cursor, limit=HISTORY_PAGE_SIZE)
+        required_fx_rates = _required_fx_rates(page["items"], existing_fills, target_currency, rate_cache)
+        for rate_date, fill_currency in sorted(required_fx_rates):
+            if deadline is not None and time.monotonic() + HISTORICAL_RATE_TIMEOUT_SECONDS >= deadline:
+                # Retry this same page next time with the already persisted rates.
+                # No fills from an incomplete page can masquerade as old history.
+                return HistoryPageBatch(added, pages_fetched, next_cursor, reached_existing_item)
+            rate = get_historical_rate(rate_date, fill_currency, target_currency)
+            session.add(
+                HistoricalFxRate(
+                    rate_date=date.fromisoformat(rate_date),
+                    from_currency=fill_currency,
+                    to_currency=target_currency,
+                    rate=rate,
+                )
+            )
+            # Keep successful lookups even if a later lookup fails or the app closes.
+            session.commit()
+            rate_cache[(rate_date, fill_currency)] = rate
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         pages_fetched += 1
+        page_has_existing_item = False
         for item in page["items"]:
             fill = item.get("fill")
             if fill is None:
@@ -78,6 +146,7 @@ def sync_order_fills(
 
             existing_fill = existing_fills.get(fill_id)
             if existing_fill is not None:
+                page_has_existing_item = True
                 # Older installations did not retain the native quote. A
                 # one-time full refresh populates it without changing the
                 # normalized values used for P/L calculations.
@@ -116,11 +185,38 @@ def sync_order_fills(
             session.add(order_fill)
             existing_fills[fill_id] = order_fill
             added += 1
-        cursor = _extract_cursor(page.get("nextPagePath"))
-        if cursor is None:
+        next_cursor = _extract_cursor(page.get("nextPagePath"))
+        # A committed cursor makes an interrupted catch-up safe to resume:
+        # previously inserted rows cannot make the next run stop early.
+        session.commit()
+        if page_has_existing_item:
+            reached_existing_item = True
+        if next_cursor is None or (stop_when_existing and page_has_existing_item):
             break
-    session.commit()
-    return added
+        cursor = next_cursor
+    return HistoryPageBatch(added, pages_fetched, next_cursor, reached_existing_item)
+
+
+def _required_fx_rates(
+    items: list[dict],
+    existing_fills: dict[str, OrderFill],
+    target_currency: str,
+    rate_cache: dict[tuple[str, str], float],
+) -> set[tuple[str, str]]:
+    """Return uncached FX lookups needed before this page can be committed."""
+    required: set[tuple[str, str]] = set()
+    for item in items:
+        fill = item.get("fill")
+        if fill is None or fill["type"] != "TRADE" or str(fill["id"]) in existing_fills:
+            continue
+        fill_currency = fill["walletImpact"]["currency"]
+        if fill_currency == target_currency:
+            continue
+        filled_at = datetime.fromisoformat(fill["filledAt"].replace("Z", "+00:00"))
+        cache_key = (filled_at.date().isoformat(), fill_currency)
+        if cache_key not in rate_cache:
+            required.add(cache_key)
+    return required
 
 
 def sync_dividends(session: Session, client: Trading212Client, max_pages: int | None = None) -> int:
@@ -129,16 +225,41 @@ def sync_dividends(session: Session, client: Trading212Client, max_pages: int | 
     Unlike order fills, Trading212 reports dividend `amount` directly in the
     account's primary currency, so no FX normalization is needed here.
     """
+    return _sync_dividend_pages(
+        session,
+        client,
+        cursor=None,
+        max_pages=max_pages,
+        stop_when_existing=False,
+        deadline=None,
+    ).added
+
+
+def _sync_dividend_pages(
+    session: Session,
+    client: Trading212Client,
+    *,
+    cursor: int | None,
+    max_pages: int | None,
+    stop_when_existing: bool,
+    deadline: float | None,
+) -> HistoryPageBatch:
+    """Read a bounded run of dividend pages and commit each page's progress."""
     existing_ids = {row.id for row in session.query(Dividend.id).all()}
     added = 0
-    cursor: int | None = None
     pages_fetched = 0
+    reached_existing_item = False
+    next_cursor = cursor
     while max_pages is None or pages_fetched < max_pages:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         page = client.get_dividends(cursor=cursor, limit=HISTORY_PAGE_SIZE)
         pages_fetched += 1
+        page_has_existing_item = False
         for item in page["items"]:
             dividend_id = item.get("reference") or (f"{item['ticker']}:{item['paidOn']}:{item['amount']}")
             if dividend_id in existing_ids:
+                page_has_existing_item = True
                 continue
             session.add(
                 Dividend(
@@ -152,15 +273,21 @@ def sync_dividends(session: Session, client: Trading212Client, max_pages: int | 
             )
             existing_ids.add(dividend_id)
             added += 1
-        cursor = _extract_cursor(page.get("nextPagePath"))
-        if cursor is None:
+        next_cursor = _extract_cursor(page.get("nextPagePath"))
+        session.commit()
+        if page_has_existing_item:
+            reached_existing_item = True
+        if next_cursor is None or (stop_when_existing and page_has_existing_item):
             break
-    session.commit()
-    return added
+        cursor = next_cursor
+    return HistoryPageBatch(added, pages_fetched, next_cursor, reached_existing_item)
 
 
 def sync_native_price_backfill(
-    session: Session, client: Trading212Client, max_pages: int = NATIVE_PRICE_BACKFILL_PAGES
+    session: Session,
+    client: Trading212Client,
+    max_pages: int = MAX_HISTORY_PAGES_PER_RUN,
+    deadline: float | None = None,
 ) -> bool:
     """Populate native quotes for historical fills in resumable rate-safe batches.
 
@@ -195,6 +322,8 @@ def sync_native_price_backfill(
         cursor = int(state.continuation_cursor) if state.continuation_cursor is not None else None
 
     for _ in range(max_pages):
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
         try:
             page = client.get_historical_orders(cursor=cursor, limit=HISTORY_PAGE_SIZE)
         except httpx.HTTPStatusError as exc:
@@ -229,56 +358,77 @@ def sync_native_price_backfill(
     return False
 
 
-def _initial_backfill_complete(
-    session: Session, source: str, model: type[OrderFill] | type[Dividend]
-) -> bool:
-    if session.get(HistorySyncState, source) is not None:
-        return True
-
-    # Existing installations predate HistorySyncState. Their populated
-    # history is already a completed backfill, so do not restart a multi-
-    # minute full scan merely because the checkpoint table is new.
-    if session.query(model.id).first() is None:
-        return False
-
-    _mark_initial_backfill_complete(session, source)
-    return True
+def _history_state(session: Session, source: str) -> HistorySyncState:
+    state = session.get(HistorySyncState, source)
+    if state is None:
+        state = HistorySyncState(source=source)
+        session.add(state)
+    return state
 
 
-def _mark_initial_backfill_complete(session: Session, source: str) -> None:
-    session.add(HistorySyncState(source=source))
-    session.commit()
+def _save_page_batch(state: HistorySyncState, batch: HistoryPageBatch) -> None:
+    if batch.pages_fetched == 0:
+        return
+    state.continuation_cursor = (
+        None if batch.reached_existing_item or batch.next_cursor is None else str(batch.next_cursor)
+    )
+    if state.continuation_cursor is None:
+        state.completed_at = datetime.now(timezone.utc)
 
 
-def sync_history(session: Session, client: Trading212Client, target_currency: str) -> None:
-    """Sync history without exceeding Trading212's six-request-per-minute quota.
+def _state_cursor(state: HistorySyncState) -> int | None:
+    return int(state.continuation_cursor) if state.continuation_cursor is not None else None
 
-    New installations fully backfill each source once. Afterwards, each
-    minute checks the six newest 50-item pages (300 events) and skips IDs
-    that are already in the database. That window comfortably covers new
-    events between successful minute runs while keeping each endpoint within
-    its own documented request budget.
+
+def sync_history(
+    session: Session,
+    client: Trading212Client,
+    target_currency: str,
+    *,
+    deadline: float | None = None,
+) -> None:
+    """Sync history in resumable batches that finish within one scheduler tick.
+
+    Each run fetches at most three pages across orders and dividends. A source
+    with a saved cursor continues backwards on the next run until it reaches a
+    previously stored item; then it returns to checking only the newest page.
     """
-    if not sync_native_price_backfill(session, client):
+    if not sync_native_price_backfill(
+        session,
+        client,
+        max_pages=MAX_HISTORY_PAGES_PER_RUN,
+        deadline=deadline,
+    ):
         # Reserve the order-history quota for the resumable native-price
         # backfill. The next scheduled run continues from its saved cursor.
         return
 
-    orders_backfilled = _initial_backfill_complete(session, "orders", OrderFill)
-    sync_order_fills(
+    pages_remaining = MAX_HISTORY_PAGES_PER_RUN
+    order_state = _history_state(session, "orders")
+    order_batch = _sync_order_fill_pages(
         session,
         client,
         target_currency,
-        max_pages=MAX_RECENT_HISTORY_PAGES if orders_backfilled else None,
+        cursor=_state_cursor(order_state),
+        max_pages=min(ORDER_HISTORY_PAGES_PER_RUN, pages_remaining),
+        stop_when_existing=True,
+        deadline=deadline,
     )
-    if not orders_backfilled:
-        _mark_initial_backfill_complete(session, "orders")
+    _save_page_batch(order_state, order_batch)
+    session.commit()
+    pages_remaining -= order_batch.pages_fetched
 
-    dividends_backfilled = _initial_backfill_complete(session, "dividends", Dividend)
-    sync_dividends(
+    if pages_remaining == 0:
+        return
+
+    dividend_state = _history_state(session, "dividends")
+    dividend_batch = _sync_dividend_pages(
         session,
         client,
-        max_pages=MAX_RECENT_HISTORY_PAGES if dividends_backfilled else None,
+        cursor=_state_cursor(dividend_state),
+        max_pages=pages_remaining,
+        stop_when_existing=True,
+        deadline=deadline,
     )
-    if not dividends_backfilled:
-        _mark_initial_backfill_complete(session, "dividends")
+    _save_page_batch(dividend_state, dividend_batch)
+    session.commit()

@@ -1,0 +1,62 @@
+⨯ TypeError: fetch failed
+    at async getPortfolioCurrent (lib\api.ts:32:20)
+    at async DashboardAccountSummary (components\DashboardAccountSummary.tsx:5:23)
+  30 |
+  31 | export async function getPortfolioCurrent(): Promise<PortfolioCurrent> {
+> 32 |   const response = await backendRequest("/api/portfolio/current");
+     |                    ^
+  33 |   if (!response.ok) {
+  34 |     throw new Error(`Failed to fetch current portfolio: ${response.status}`);
+  35 |   } {
+  digest: '1491036609',
+  [cause]: Error: read ECONNRESET
+      at ignore-listed frames {
+    errno: -4077,
+    code: 'ECONNRESET',
+    syscall: 'read'
+  }
+}
+[browser] Uncaught Error: Switched to client rendering because the server rendering errored:
+
+fetch failed
+    at getPortfolioCurrent (lib\api.ts:32:20)
+    at DashboardAccountSummary (components\DashboardAccountSummary.tsx:5:23)
+  30 |
+  31 | export async function getPortfolioCurrent(): Promise<PortfolioCurrent> {
+> 32 |   const response = await backendRequest("/api/portfolio/current");
+     |                    ^
+  33 |   if (!response.ok) {
+  34 |     throw new Error(`Failed to fetch current portfolio: ${response.status}`);
+  35 |   }
+[browser] Uncaught Error: Switched to client rendering because the server rendering errored:
+
+fetch failed
+    at getPortfolioCurrent (lib\api.ts:32:20)
+    at DashboardAccountSummary (components\DashboardAccountSummary.tsx:5:23)
+  30 |
+  31 | export async function getPortfolioCurrent(): Promise<PortfolioCurrent> {
+> 32 |   const response = await backendRequest("/api/portfolio/current");
+     |                    ^
+  33 |   if (!response.ok) {
+  34 |     throw new Error(`Failed to fetch current portfolio: ${response.status}`);
+  35 |   }
+⨯ Error: failed to pipe response
+    at ignore-listed frames {
+  [cause]: TypeError: terminated
+      at ignore-listed frames {
+    [cause]: Error [BodyTimeoutError]: Body Timeout Error
+        at ignore-listed frames {
+      code: 'UND_ERR_BODY_TIMEOUT'
+    }
+  }
+}
+⨯ Error: failed to pipe response
+    at ignore-listed frames {
+  [cause]: TypeError: terminated
+      at ignore-listed frames {
+    [cause]: Error [BodyTimeoutError]: Body Timeout Error
+        at ignore-listed frames {
+      code: 'UND_ERR_BODY_TIMEOUT'
+    }
+  }
+}

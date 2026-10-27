@@ -14,12 +14,15 @@ from app.alpaca_market_data import NEW_YORK, AlpacaMarketDataClient, HistoricalB
 from app.models import WatchlistEntry
 
 SIP_DELAY = timedelta(minutes=15)
+CHART_ADJUSTMENT = "split"
 MAX_HISTORY_WINDOW = timedelta(days=5 * 366)
 ONE_MINUTE = 60
 FIFTEEN_MINUTES = 15 * ONE_MINUTE
 THIRTY_MINUTES = 30 * ONE_MINUTE
 ONE_HOUR = 60 * ONE_MINUTE
 SIP_CACHE_TTL_SECONDS = 30
+ONE_DAY_HISTORY_LOOKBACK = timedelta(days=14)
+ONE_DAY_BAR_COUNT = 24 * ONE_HOUR // FIFTEEN_MINUTES
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,8 @@ class ChartRange:
 
 
 CHART_RANGES = {
-    "1D": ChartRange("1D", timedelta(days=1), "15Min", FIFTEEN_MINUTES),
+    # Fetch across closed-market gaps, then display the latest 24 hours of actual bars.
+    "1D": ChartRange("1D", ONE_DAY_HISTORY_LOOKBACK, "15Min", FIFTEEN_MINUTES),
     "1W": ChartRange("1W", timedelta(days=7), "30Min", THIRTY_MINUTES),
     "1M": ChartRange("1M", timedelta(days=31), "4Hour", 4 * ONE_HOUR),
     "3M": ChartRange("3M", timedelta(days=93), "1Day", 24 * ONE_HOUR),
@@ -64,8 +68,14 @@ class ChartSnapshot:
 class ChartDataSource(Protocol):
     """Seam for supplying chart data without changing the chart route contract."""
 
-    def load_chart(self, entry: WatchlistEntry, chart_range: ChartRange, now: datetime) -> ChartSnapshot:
-        """Return delayed-SIP history plus a temporary IEX tail for one chart range."""
+    def load_chart(
+        self,
+        entry: WatchlistEntry,
+        chart_range: ChartRange,
+        now: datetime,
+        include_provisional_iex: bool = True,
+    ) -> ChartSnapshot:
+        """Return split-adjusted SIP history, optionally bridged with a live IEX tail."""
 
 
 @dataclass(frozen=True)
@@ -76,7 +86,7 @@ class _CachedSIPRange:
 
 
 class AlpacaChartDataSource:
-    """Fetch chart history on demand without persisting price bars in the application database."""
+    """Fetch split-adjusted chart history on demand without persisting price bars."""
 
     def __init__(
         self,
@@ -90,10 +100,25 @@ class AlpacaChartDataSource:
         self._sip_cache: dict[tuple[str, str], _CachedSIPRange] = {}
         self._cache_lock = Lock()
 
-    def load_chart(self, entry: WatchlistEntry, chart_range: ChartRange, now: datetime) -> ChartSnapshot:
-        """Load cached delayed SIP history and a fresh IEX bridge to the present."""
+    def load_chart(
+        self,
+        entry: WatchlistEntry,
+        chart_range: ChartRange,
+        now: datetime,
+        include_provisional_iex: bool = True,
+    ) -> ChartSnapshot:
+        """Load cached delayed SIP history and, when requested, the fresh IEX bridge."""
         canonical_bars, canonical_through = self._sip_bars(entry, chart_range, now)
-        iex_bars = self._iex_tail(entry, chart_range, canonical_through, now)
+        iex_bars = (
+            self._iex_tail(entry, chart_range, canonical_through, now) if include_provisional_iex else []
+        )
+        if chart_range.name == "1D":
+            # Count overlapping SIP/IEX buckets once and preserve their provenance.
+            timestamps = sorted({bar.starts_at for bar in [*canonical_bars, *iex_bars]})
+            if len(timestamps) > ONE_DAY_BAR_COUNT:
+                start = timestamps[-ONE_DAY_BAR_COUNT]
+                canonical_bars = [bar for bar in canonical_bars if bar.starts_at >= start]
+                iex_bars = [bar for bar in iex_bars if bar.starts_at >= start]
         return ChartSnapshot(canonical_bars, iex_bars, canonical_through)
 
     def _sip_bars(
@@ -113,7 +138,7 @@ class AlpacaChartDataSource:
             start,
             canonical_through,
             chart_range.alpaca_timeframe,
-            adjustment="raw",
+            adjustment=CHART_ADJUSTMENT,
         )
         chart_bars = aggregate_chart_bars(
             (
@@ -122,6 +147,8 @@ class AlpacaChartDataSource:
             ),
             chart_range,
         )
+        if chart_range.name == "1D":
+            chart_bars = chart_bars[-ONE_DAY_BAR_COUNT:]
         cached = _CachedSIPRange(
             bars=chart_bars,
             canonical_through=canonical_through,
@@ -219,6 +246,9 @@ def aggregate_bars(bars: Iterable[ChartBar], interval_seconds: int) -> list[Char
 
 def chart_bucket_start(timestamp: datetime, chart_range: ChartRange) -> datetime:
     """Return the start of the currently forming output bar for a chart range."""
+    if chart_range.calendar_bucket == "day":
+        local = _as_utc(timestamp).astimezone(NEW_YORK)
+        return datetime.combine(local.date(), time(0), NEW_YORK).astimezone(timezone.utc)
     if chart_range.calendar_bucket == "week":
         local = _as_utc(timestamp).astimezone(NEW_YORK)
         week_start = local.date() - timedelta(days=local.weekday())
