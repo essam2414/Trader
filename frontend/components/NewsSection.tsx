@@ -254,6 +254,7 @@ export function NewsSection() {
   const [isRefreshingNews, setIsRefreshingNews] = useState(false);
   const [eventsRefreshMessage, setEventsRefreshMessage] = useState<string | null>(null);
   const [newsRefreshMessage, setNewsRefreshMessage] = useState<string | null>(null);
+  const [newsRefreshOutcome, setNewsRefreshOutcome] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const getJson = async <T,>(path: string): Promise<T> => {
@@ -355,6 +356,7 @@ export function NewsSection() {
   async function refreshNews() {
     setIsRefreshingNews(true);
     setNewsRefreshMessage(null);
+    setNewsRefreshOutcome(null);
     try {
       const response = await fetch("/api/news", { method: "POST", cache: "no-store" });
       if (!response.ok) {
@@ -374,6 +376,8 @@ export function NewsSection() {
         setNewsStatus(status);
         lastSeenNewsRunRef.current = status.lastRun?.startedAt ?? null;
       }
+      const analysisResult = `Checked ${result.refreshedSources} sources. Analysis: ${result.analysisAttempted ?? 0} attempted, ${result.analysisResolved ?? 0} resolved, ${result.analysisRemaining ?? 0} still awaiting analysis.`;
+      setNewsRefreshOutcome(analysisResult);
       setNewsRefreshMessage(result.failedSources.length > 0
         ? `Some news sources are unavailable: ${result.failedSources.join(", ")}.`
         : null);
@@ -429,12 +433,22 @@ export function NewsSection() {
       {activeStatus?.lastSuccessfulRunAt ? `${tab === "news" ? "Last successful source" : "Last collected"} ${timeLabel(activeStatus.lastSuccessfulRunAt)}` : "Waiting for first collection"}
       {tab === "news" && newsStatus?.lastAttemptAt && <span className="ml-2">Last attempt {timeLabel(newsStatus.lastAttemptAt)}</span>}
     </div>
+    {tab === "news" && newsRefreshOutcome && <p role="status" className="mt-2 text-xs text-neutral-400">{newsRefreshOutcome}</p>}
     {tab === "news" && newsStatus && newsStatus.pendingSummaries > 0 && <div role="status" className="mt-2 rounded-md bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
-      {newsStatus.pendingSummaries} source-backed {newsStatus.pendingSummaries === 1 ? "story has" : "stories have"} a summary pending. Summaries retry automatically.
-      {(newsStatus.unresolvedDevelopments ?? 0) > 0 && <p className="mt-1">{newsStatus.unresolvedDevelopments} possible developments are being checked against earlier coverage before appearing here.</p>}
+      <p>{newsStatus.pendingSummaries} {newsStatus.pendingSummaries === 1 ? "story" : "stories"} awaiting analysis.</p>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        <span>Waiting for summaries: {newsStatus.waitingSummaries ?? Math.max(0, newsStatus.pendingSummaries - (newsStatus.unresolvedDevelopments ?? 0))}</span>
+        <span>Rejected summaries: {newsStatus.rejectedSummaries ?? 0}</span>
+        <span>Checking earlier coverage: {newsStatus.checkingDevelopments ?? newsStatus.unresolvedDevelopments ?? 0}</span>
+        <span>Needs review: {newsStatus.needsReview ?? 0}</span>
+      </div>
+      <p className="mt-1">Automatic retries run when due. Items needing review retry when evidence changes or you refresh.</p>
       {(newsStatus.pendingSummaryIssues?.length ?? 0) > 0 && <details className="mt-1">
-        <summary className="cursor-pointer">See retry status</summary>
-        <ul className="mt-2 space-y-1 pl-4">{newsStatus.pendingSummaryIssues.map((issue) => <li key={issue.storyId} className="list-disc">{issue.headline}: {issue.reason}{issue.nextRetryAt ? ` · Next retry ${timeLabel(issue.nextRetryAt)}` : ""}</li>)}</ul>
+        <summary className="cursor-pointer">See analysis details</summary>
+        <ul className="mt-2 space-y-2 pl-4">{newsStatus.pendingSummaryIssues.map((issue) => <li key={issue.storyId} className="list-disc">
+          <p>{issue.headline}: {issue.reason}{issue.queueStatus === "review" ? " · Needs review" : issue.nextRetryAt ? ` · Next retry ${timeLabel(issue.nextRetryAt)}` : ""}</p>
+          {(issue.sources?.length ?? 0) > 0 && <div className="flex flex-wrap gap-x-3">{issue.sources?.map((source) => <a key={`${source.provider}:${source.url}`} href={source.url} target="_blank" rel="noopener noreferrer" className="text-sky-300 underline">{source.title}</a>)}</div>}
+        </li>)}</ul>
       </details>}
     </div>}
     <div aria-label={tab === "news" ? "News articles" : "Upcoming events"} className="dashboard-pane-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-3 pb-6">

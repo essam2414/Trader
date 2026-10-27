@@ -9,6 +9,55 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("WatchlistItem", () => {
+  it.each([
+    { percentChange: 0.48, dollarChange: 1.2, closes: [252, 251.2], color: "#42d95a", textColor: "text-[#32e64d]" },
+    { percentChange: -0.48, dollarChange: -1.2, closes: [248, 248.8], color: "#ff4e57", textColor: "text-[#ff3b45]" },
+    { percentChange: 0, dollarChange: 0, closes: [252, 250], color: "#78838a", textColor: "text-[#8a9298]" },
+    { percentChange: null, dollarChange: -1.2, closes: [252, 248.8], color: "#78838a", textColor: "text-[#8a9298]" },
+  ])("matches the preview colour to daily percentage $percentChange despite the chart direction", ({
+    percentChange, dollarChange, closes, color, textColor,
+  }) => {
+    render(
+      <WatchlistItem
+        entry={{
+          assetId: "asset-1",
+          symbol: "VRT",
+          name: "Vertiv Holdings",
+          exchange: "NYSE",
+          sortOrder: 0,
+          addedAt: "2026-09-18T13:30:00Z",
+          logoUrl: "/api/watchlist/asset-1/logo",
+          quote: {
+            price: closes[1],
+            previousClose: 250,
+            dollarChange,
+            percentChange,
+            sparkline: [
+              { timestamp: "2026-09-18T13:30:00Z", close: closes[0] },
+              { timestamp: "2026-09-18T13:35:00Z", close: closes[1] },
+            ],
+            feed: "iex",
+            sourceTimestamp: "2026-09-18T13:35:00Z",
+            sourceType: "trade",
+            freshness: "fresh",
+            isExtendedHours: false,
+            isDelayed: false,
+            delaySeconds: null,
+          },
+        }}
+        mode="default"
+        isDragging={false}
+        isSavingOrder={false}
+        onRemove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: /24-hour price direction/i }).querySelector("path"))
+      .toHaveAttribute("stroke", color);
+    const percentage = percentChange === null ? "—" : `${Math.abs(percentChange).toFixed(2)}%`;
+    expect(screen.getByText((content) => content.endsWith(percentage))).toHaveClass(textColor);
+  });
+
   it("visibly shades a default item while it is hovered", () => {
     const { container } = render(
       <WatchlistItem

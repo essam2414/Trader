@@ -64,6 +64,38 @@ class FailedAnalyser:
         return None
 
 
+def test_repeated_validation_is_held_until_evidence_changes_or_manual_retry(db_session):
+    class RejectedAnalyser(FailedAnalyser):
+        last_failure_kind = "validation"
+        last_failure_reason = "Unsupported number: $99B"
+
+    entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme", exchange="NASDAQ")
+    db_session.add(entry)
+    db_session.commit()
+    now = datetime(2026, 10, 6, tzinfo=timezone.utc)
+    item = SourceItem("company", "a", "https://example.com/a", "Acme wins contract", "", now, ("ACME",))
+    ingest_items(db_session, [item], [entry], RejectedAnalyser(), now, [0])
+    story = db_session.query(NewsStory).one()
+    for attempt in range(3):
+        assert (
+            retry_pending(db_session, [entry], RejectedAnalyser(), now + timedelta(hours=attempt), [1]) == 1
+        )
+    state = db_session.get(NewsSyncState, f"analysis:{story.id}")
+    assert state.last_outcome == "needs_review"
+    assert state.failure_count == 3
+    assert state.next_attempt_at is None
+    assert retry_pending(db_session, [entry], RejectedAnalyser(), now + timedelta(hours=4), [1]) == 0
+    assert (
+        retry_pending(db_session, [entry], RejectedAnalyser(), now + timedelta(hours=4), [1], force=True) == 1
+    )
+    source = db_session.query(NewsSourceItem).one()
+    source.excerpt = "Acme disclosed new contract evidence."
+    db_session.commit()
+    assert retry_pending(db_session, [entry], RejectedAnalyser(), now + timedelta(hours=5), [1]) == 1
+    assert state.failure_count == 1
+    assert state.last_outcome == "failure"
+
+
 def test_cross_source_duplicates_become_one_story_and_keep_earliest_release(db_session):
     entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
     db_session.add(entry)
@@ -168,7 +200,7 @@ def test_model_outage_preserves_direct_source_as_pending(db_session):
     assert story.status == "ready"
 
 
-def test_pending_analysis_retries_independently_with_failure_cooldown(db_session):
+def test_pending_analysis_retries_independently_with_failure_cooldown(db_session, monkeypatch):
     entry = WatchlistEntry(alpaca_asset_id="asset-acme", symbol="ACME", name="Acme Corp", exchange="NASDAQ")
     db_session.add(entry)
     db_session.commit()
@@ -180,9 +212,10 @@ def test_pending_analysis_retries_independently_with_failure_cooldown(db_session
     assert retry_pending(db_session, [entry], FailedAnalyser(), now, [1]) == 1
     state = db_session.get(NewsSyncState, f"analysis:{story.id}")
     assert state.last_error == "Summary analysis did not complete"
-    assert retry_pending(db_session, [entry], FakeAnalyser(), now + timedelta(minutes=5), [1]) == 0
+    monkeypatch.setattr(FakeAnalyser, "model", FailedAnalyser.model)
+    assert retry_pending(db_session, [entry], FakeAnalyser(), now + timedelta(minutes=1), [1]) == 0
     assert story.status == "pending"
-    assert retry_pending(db_session, [entry], FakeAnalyser(), now + timedelta(minutes=30), [1]) == 1
+    assert retry_pending(db_session, [entry], FakeAnalyser(), now + timedelta(minutes=5), [1]) == 1
     assert story.status == "ready"
     assert db_session.get(NewsSyncState, f"analysis:{story.id}") is None
 

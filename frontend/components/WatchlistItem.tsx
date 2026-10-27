@@ -45,18 +45,9 @@ function displayName(name: string): string {
 }
 
 function trendFor(entry: WatchlistEntry): WatchlistTrend {
-  const change = entry.quote.percentChange ?? entry.quote.dollarChange;
+  const change = entry.quote.percentChange;
   if (change === null || change === 0) return "neutral";
   return change > 0 ? "positive" : "negative";
-}
-
-function chartTrendFor(entry: WatchlistEntry): WatchlistTrend {
-  const points = entry.quote.sparkline;
-  if (points.length >= 2) {
-    const movement = points.at(-1)!.close - points[0].close;
-    if (movement !== 0) return movement > 0 ? "positive" : "negative";
-  }
-  return trendFor(entry);
 }
 
 function CachedLogo({ name, logoUrl }: Pick<WatchlistEntry, "name" | "logoUrl">) {
@@ -102,7 +93,6 @@ export function WatchlistItem({
 }: WatchlistItemProps) {
   const router = useRouter();
   const trend = trendFor(entry);
-  const chartTrend = chartTrendFor(entry);
   const percentChange = entry.quote.percentChange;
   const changeClass = trend === "positive" ? "text-[#32e64d]" : trend === "negative" ? "text-[#ff3b45]" : "text-[#8a9298]";
   const changeIndicator = trend === "positive" ? "↗" : trend === "negative" ? "↘" : "–";
@@ -158,7 +148,7 @@ export function WatchlistItem({
         </p>
       </div>
       <div className="justify-self-end">
-        <WatchlistSparkline points={entry.quote.sparkline} trend={chartTrend} />
+        <WatchlistSparkline points={entry.quote.sparkline} trend={trend} />
       </div>
       <div className="min-w-0 text-right font-sans [font-variant-numeric:tabular-nums]">
         <p className="truncate text-[16px] font-semibold leading-tight text-[#f5f5f5] sm:text-[17px]">

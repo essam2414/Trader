@@ -92,3 +92,33 @@ def test_identity_migration_preserves_existing_cards_and_is_safe_after_create_al
         assert {"news_event_identities", "news_resolution_decisions"} <= set(
             sa.inspect(connection).get_table_names()
         )
+
+
+def test_analysis_migration_preserves_retry_state_and_round_trips():
+    engine = sa.create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    path = Path(__file__).parents[1] / "alembic/versions/20261006_news_analysis_reliability.py"
+    spec = importlib.util.spec_from_file_location("news_analysis_revision", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    with engine.begin() as connection:
+        revision.op = Operations(MigrationContext.configure(connection))
+        revision.downgrade()
+        connection.execute(
+            sa.text(
+                "INSERT INTO news_sync_states (source_key, last_error) "
+                "VALUES ('analysis:42', 'Rejected number')"
+            )
+        )
+        revision.upgrade()
+        revision.upgrade()
+        row = connection.execute(
+            sa.text(
+                "SELECT last_error, failure_count, failure_kind FROM news_sync_states "
+                "WHERE source_key='analysis:42'"
+            )
+        ).one()
+        assert tuple(row) == ("Rejected number", 0, None)
+        assert sa.inspect(connection).has_table("news_comparison_cache")
+        revision.downgrade()
+        assert connection.scalar(sa.text("SELECT last_error FROM news_sync_states")) == "Rejected number"

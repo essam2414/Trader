@@ -1,6 +1,7 @@
 """Persisted, read-only watchlist catalyst cards and upcoming events."""
 
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -93,16 +94,20 @@ def list_news(
     db: Session = Depends(get_db),
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    asset_id: str | None = Query(default=None, alias="assetId", min_length=1, max_length=36),
 ) -> list[CatalystCardOut]:
+    if asset_id is not None and not db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).first():
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    linked_stories = db.query(NewsStoryStock.story_id).join(
+        WatchlistEntry, WatchlistEntry.alpaca_asset_id == NewsStoryStock.alpaca_asset_id
+    )
+    if asset_id is not None:
+        linked_stories = linked_stories.filter(NewsStoryStock.alpaca_asset_id == asset_id)
     stories = (
         db.query(NewsStory)
         .filter(
             NewsStory.status.in_(("ready", "pending")),
-            NewsStory.id.in_(
-                db.query(NewsStoryStock.story_id).join(
-                    WatchlistEntry, WatchlistEntry.alpaca_asset_id == NewsStoryStock.alpaca_asset_id
-                )
-            ),
+            NewsStory.id.in_(linked_stories),
         )
         .order_by(
             NewsStory.released_at.desc().nullslast(),
@@ -135,21 +140,51 @@ def news_status(db: Session = Depends(get_db)) -> NewsStatusOut:
         )
         .all()
     )
-    pending_by_id = {story.id: story for story in pending}
-    analysis_states = db.query(NewsSyncState).filter(NewsSyncState.source_key.startswith("analysis:")).all()
+    analysis_states = {
+        state.source_key: state
+        for state in db.query(NewsSyncState).filter(NewsSyncState.source_key.startswith("analysis:")).all()
+    }
+    counts = Counter()
     summary_issues = []
-    for state in analysis_states:
-        try:
-            story = pending_by_id.get(int(state.source_key.removeprefix("analysis:")))
-        except ValueError:
-            continue
-        if story and state.last_error:
+    for story in pending:
+        state = analysis_states.get(f"analysis:{story.id}")
+        queue_status = (
+            "review"
+            if state and state.last_outcome == "needs_review"
+            else "validation"
+            if state and state.failure_kind == "validation"
+            else "comparison"
+            if story.status == "resolving"
+            else "waiting"
+        )
+        counts[queue_status] += 1
+        if state and state.last_error:
+            sources = (
+                db.query(NewsSourceItem)
+                .join(NewsStorySource)
+                .filter(NewsStorySource.story_id == story.id)
+                .all()
+            )
             summary_issues.append(
                 PendingSummaryIssueOut(
                     storyId=story.id,
                     headline=story.headline,
-                    reason=state.last_error,
+                    reason=_URL_PATTERN.sub("[source URL]", state.last_error),
                     nextRetryAt=_utc(state.next_attempt_at),
+                    queueStatus=queue_status,
+                    attempts=state.failure_count or 0,
+                    sources=[
+                        CatalystSourceOut(
+                            title=source.title,
+                            provider=source.provider,
+                            url=source.url,
+                            publishedAt=_utc(source.published_at),
+                            dateStatus=source.date_status,
+                            datePrecision=source.published_date_precision,
+                            eventDate=source.event_date,
+                        )
+                        for source in sources
+                    ],
                 )
             )
     return NewsStatusOut(
@@ -159,6 +194,10 @@ def news_status(db: Session = Depends(get_db)) -> NewsStatusOut:
         sourceErrors=_source_errors(states),
         pendingSummaries=len(pending),
         unresolvedDevelopments=sum(story.status == "resolving" for story in pending),
+        waitingSummaries=counts["waiting"],
+        rejectedSummaries=counts["validation"],
+        checkingDevelopments=counts["comparison"],
+        needsReview=counts["review"],
         pendingSummaryIssues=sorted(summary_issues, key=lambda issue: issue.storyId),
         lastRun=NewsRunOut(
             startedAt=_utc(run.started_at),
@@ -187,12 +226,17 @@ def refresh_news(db: Session = Depends(get_db)) -> NewsRefreshOut:
         for state in db.query(NewsSyncState)
         .filter(
             ~NewsSyncState.source_key.startswith("events:"),
+            ~NewsSyncState.source_key.startswith("analysis:"),
             NewsSyncState.last_attempt_at >= started_at,
             NewsSyncState.last_error.is_not(None),
         )
         .all()
     )
-    refreshed_sources = {key: count for key, count in result.items() if key != "pending_retried"}
+    refreshed_sources = {
+        key: count
+        for key, count in result.items()
+        if key not in {"pending_retried", "analysis_resolved", "analysis_remaining"}
+    }
     if not refreshed_sources:
         raise HTTPException(status_code=502, detail="No news sources could be refreshed")
     latest_run = db.query(NewsCollectionRun).order_by(NewsCollectionRun.id.desc()).first()
@@ -200,6 +244,9 @@ def refresh_news(db: Session = Depends(get_db)) -> NewsRefreshOut:
         refreshedSources=len(refreshed_sources),
         refreshedStories=(latest_run.new_card_count or 0) if latest_run else 0,
         failedSources=failed_sources,
+        analysisAttempted=result.get("pending_retried", 0),
+        analysisResolved=result.get("analysis_resolved", 0),
+        analysisRemaining=result.get("analysis_remaining", 0),
     )
 
 

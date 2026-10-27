@@ -136,6 +136,17 @@ class TrendsPreferences(Base):
     chart_range: Mapped[str] = mapped_column(String(3), nullable=False, default="1W")
 
 
+class StockAnalysisSnapshot(Base):
+    """Latest derived analysis, retained across restarts and temporary data failures."""
+
+    __tablename__ = "stock_analysis_snapshots"
+
+    alpaca_asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    next_refresh_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class MarketPriceBar(Base):
     """An immutable raw, consolidated SIP observation for a watched asset."""
 
@@ -330,6 +341,19 @@ class NewsSyncState(Base):
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_outcome: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    failure_kind: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    analysis_input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class NewsComparisonCache(Base):
+    """Successful coverage batches, invalidated by complete context/model/rule hashes."""
+
+    __tablename__ = "news_comparison_cache"
+
+    input_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    decision: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class NewsCollectionRun(Base):

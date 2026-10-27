@@ -181,6 +181,34 @@ class StockChartOut(BaseModel):
     provisionalIexBars: list[StockChartBarOut]
 
 
+class AnalysisMetricOut(BaseModel):
+    id: str
+    label: str
+    value: float | None
+    unit: Literal["usd", "percent", "points", "ratio", "number"]
+    basis: Literal["daily", "intraday"]
+    condition: Literal["supportive", "neutral", "caution", "unavailable"]
+    interpretation: str
+    detail: str
+    description: str
+    relevance: str
+    thresholds: str
+
+
+class StockAnalysisOut(BaseModel):
+    assetId: str
+    symbol: str
+    status: Literal["loading", "ready", "partial", "stale", "unavailable"]
+    dailyAsOf: datetime | None = None
+    intradayAsOf: datetime | None = None
+    calculatedAt: datetime | None = None
+    nextRefreshAt: datetime | None = None
+    delaySeconds: int = 900
+    historySessions: int = 0
+    message: str | None = None
+    metrics: list[AnalysisMetricOut] = Field(default_factory=list)
+
+
 class TrendsPreferencesUpdate(BaseModel):
     assetIds: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(max_length=50)
     range: Literal["1W", "1M", "3M", "1Y", "MAX"]
@@ -263,6 +291,9 @@ class PendingSummaryIssueOut(BaseModel):
     headline: str
     reason: str
     nextRetryAt: datetime | None
+    queueStatus: Literal["waiting", "validation", "comparison", "review"] = "waiting"
+    attempts: int = 0
+    sources: list[CatalystSourceOut] = []
 
 
 class NewsStatusOut(BaseModel):
@@ -272,6 +303,10 @@ class NewsStatusOut(BaseModel):
     sourceErrors: list[SourceErrorOut]
     pendingSummaries: int
     unresolvedDevelopments: int = 0
+    waitingSummaries: int = 0
+    rejectedSummaries: int = 0
+    checkingDevelopments: int = 0
+    needsReview: int = 0
     pendingSummaryIssues: list[PendingSummaryIssueOut]
     lastRun: NewsRunOut | None = None
 
@@ -307,3 +342,6 @@ class NewsRefreshOut(BaseModel):
     refreshedSources: int
     refreshedStories: int
     failedSources: list[str]
+    analysisAttempted: int = 0
+    analysisResolved: int = 0
+    analysisRemaining: int = 0

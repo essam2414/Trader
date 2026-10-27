@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from ..models import (
+    NewsComparisonCache,
     NewsEventIdentity,
     NewsResolutionDecision,
     NewsSourceItem,
@@ -24,6 +25,7 @@ from ..models import (
 )
 from .news_dates import earliest_release, utc
 from .news_identity import analyst_event_key, analyst_target_action_key
+from .news_novelty import NoveltyDecision
 from .news_sources import SourceItem
 
 if TYPE_CHECKING:
@@ -355,16 +357,9 @@ def correct_release(db: Session, story: NewsStory) -> bool:
     return False
 
 
-def check_publication(db: Session, story: NewsStory, analyser: "OpenAINewsAnalyser", now: datetime) -> bool:
-    """Compare all relevant stored history in bounded batches; missing comparison means hold.
-
-    The candidate pool has no age cutoff. Batching bounds each request, not the history.
-    Newer unresolved rows cannot block the oldest candidate forever.
-    """
-    if story.status != "resolving":
-        return True
+def comparison_history(db: Session, story: NewsStory) -> list[NewsStory]:
     assets = [row.alpaca_asset_id for row in db.query(NewsStoryStock).filter_by(story_id=story.id)]
-    history = (
+    return (
         db.query(NewsStory)
         .join(NewsStoryStock)
         .filter(
@@ -377,39 +372,88 @@ def check_publication(db: Session, story: NewsStory, analyser: "OpenAINewsAnalys
         .order_by(NewsStory.id)
         .all()
     )
+
+
+def comparison_context(db: Session, candidate: NewsStory) -> dict:
+    evidence = "\n".join(f"{source.title}\n{source.excerpt}" for source in sources_for(db, candidate))
+    return {
+        "id": candidate.id,
+        "status": candidate.status,
+        "headline": candidate.headline,
+        "facts": candidate.key_facts,
+        "descriptor": candidate.event_descriptor,
+        "releasedAt": candidate.released_at.isoformat() if candidate.released_at else None,
+        "evidence": evidence[:24000],
+        "evidenceTruncated": len(evidence) > 24000,
+        "evidenceHash": hashlib.sha256(evidence.encode()).hexdigest(),
+    }
+
+
+def analysis_input_hash(db: Session, story: NewsStory, model: str) -> str:
+    context = {
+        "version": 2,
+        "model": model,
+        "incoming": comparison_context(db, story),
+        "history": [comparison_context(db, other) for other in comparison_history(db, story)]
+        if story.status == "resolving"
+        else [],
+    }
+    return hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+
+
+def check_publication(db: Session, story: NewsStory, analyser: "OpenAINewsAnalyser", now: datetime) -> bool:
+    """Compare all relevant stored history in bounded batches; missing comparison means hold.
+
+    The candidate pool has no age cutoff. Batching bounds each request, not the history.
+    Newer unresolved rows cannot block the oldest candidate forever.
+    """
+    if story.status != "resolving":
+        return True
+    history = comparison_history(db, story)
     if not history:
         record_decision(db, story, "new", "No previously covered development for these stocks", now)
         return True
     compare = getattr(analyser, "compare_developments", None)
     if compare is None:
+        analyser.last_failure_kind = "configuration"
+        analyser.last_failure_reason = "Novelty comparison unavailable"
         record_decision(db, story, "unresolved", "Novelty comparison unavailable", now)
         return False
 
-    def context(candidate: NewsStory) -> dict:
-        evidence = "\n".join(f"{source.title}\n{source.excerpt}" for source in sources_for(db, candidate))
-        return {
-            "id": candidate.id,
-            "headline": candidate.headline,
-            "facts": candidate.key_facts,
-            "descriptor": candidate.event_descriptor,
-            "releasedAt": candidate.released_at.isoformat() if candidate.released_at else None,
-            "evidence": evidence[:24000],
-            "evidenceTruncated": len(evidence) > 24000,
-        }
-
-    incoming = context(story)
+    incoming = comparison_context(db, story)
     # Budget reservations use their own transaction; release local writes before external calls.
     db.commit()
     matches = []
     for start in range(0, len(history), 12):
-        decision = compare(incoming, [context(other) for other in history[start : start + 12]])
+        batch = [comparison_context(db, other) for other in history[start : start + 12]]
+        key = hashlib.sha256(
+            json.dumps(
+                {"version": 2, "model": analyser.model, "incoming": incoming, "history": batch},
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        cached = db.get(NewsComparisonCache, key)
+        db.commit()
+        decision = NoveltyDecision.model_validate(cached.decision) if cached else compare(incoming, batch)
+        if not cached and decision is not None and decision.outcome != "unresolved":
+            db.add(NewsComparisonCache(input_hash=key, decision=decision.model_dump(), created_at=now))
+            db.commit()
         if decision is None or decision.outcome == "unresolved":
-            record_decision(db, story, "unresolved", "Novelty check incomplete or ambiguous", now)
+            if not getattr(analyser, "last_failure_reason", None):
+                analyser.last_failure_kind = "ambiguous" if decision else "temporary"
+                analyser.last_failure_reason = (
+                    "Coverage comparison needs evidence: " + decision.reason
+                    if decision
+                    else "Coverage comparison did not complete"
+                )
+            record_decision(db, story, "unresolved", analyser.last_failure_reason, now)
             return False
         if decision.outcome != "new":
             matches.append(decision)
     if len(matches) > 1:
-        record_decision(db, story, "unresolved", "Multiple prior developments match", now)
+        analyser.last_failure_kind = "ambiguous"
+        analyser.last_failure_reason = "Multiple prior developments match; additional evidence is needed"
+        record_decision(db, story, "unresolved", analyser.last_failure_reason, now)
         return False
     if not matches:
         record_decision(db, story, "new", "Distinct from previously covered developments", now)

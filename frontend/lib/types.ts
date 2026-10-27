@@ -232,7 +232,16 @@ export interface NewsStatus {
   sourceErrors: SourceError[];
   pendingSummaries: number;
   unresolvedDevelopments?: number;
-  pendingSummaryIssues: { storyId: number; headline: string; reason: string; nextRetryAt: string | null }[];
+  waitingSummaries?: number;
+  rejectedSummaries?: number;
+  checkingDevelopments?: number;
+  needsReview?: number;
+  pendingSummaryIssues: {
+    storyId: number; headline: string; reason: string; nextRetryAt: string | null;
+    queueStatus?: "waiting" | "validation" | "comparison" | "review";
+    attempts?: number;
+    sources?: CatalystDetail["sources"];
+  }[];
 }
 
 export interface SourceError {
@@ -271,6 +280,9 @@ export interface NewsRefreshResult {
   refreshedSources: number;
   refreshedStories: number;
   failedSources: string[];
+  analysisAttempted?: number;
+  analysisResolved?: number;
+  analysisRemaining?: number;
 }
 export interface AnalysisMetric {
   id: string;

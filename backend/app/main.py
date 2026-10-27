@@ -34,6 +34,7 @@ from .scheduler import (
 )
 from .services.chart_data import AlpacaChartDataSource
 from .services.portfolio_current import PortfolioCurrentCache
+from .services.stock_analysis_data import StockAnalysisService
 from .trading212 import Trading212Client
 
 
@@ -69,6 +70,13 @@ async def lifespan(app: FastAPI):
         else None
     )
     app.state.alpaca_iex_trade_stream = None
+    app.state.stock_analysis = (
+        StockAnalysisService(
+            AlpacaMarketDataClient(settings.alpaca_api_key, settings.alpaca_api_secret, "sip"), SessionLocal
+        )
+        if settings.alpaca_api_key and settings.alpaca_api_secret
+        else None
+    )
     app.state.alpaca_delayed_sip_trade_stream = None
     if settings.alpaca_api_key and settings.alpaca_api_secret:
         stream = AlpacaIexTradeStream(
@@ -94,6 +102,16 @@ async def lifespan(app: FastAPI):
         delayed_sip_stream.start()
         app.state.alpaca_delayed_sip_trade_stream = delayed_sip_stream
     scheduler = BackgroundScheduler()
+    if app.state.stock_analysis is not None:
+        scheduler.add_job(
+            app.state.stock_analysis.refresh_watchlist,
+            "interval",
+            minutes=5,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=2),
+            id="stock_analysis",
+            max_instances=1,
+            coalesce=True,
+        )
     scheduler.add_job(run_snapshot_job, "interval", minutes=settings.snapshot_interval_minutes)
     scheduler.add_job(run_history_sync_job, "interval", minutes=settings.history_sync_interval_minutes)
     if settings.news_enabled:

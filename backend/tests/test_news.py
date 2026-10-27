@@ -163,6 +163,54 @@ def article(article_id, headline, created_at, updated_at, symbols):
     }
 
 
+def test_stock_news_filter_precedes_pagination_and_keeps_shared_stories(client, db_session):
+    from datetime import timedelta
+
+    when = datetime(2026, 10, 3, tzinfo=timezone.utc)
+    for asset_id, symbol in [("asset-sandisk", "SNDK"), ("asset-other", "MU")]:
+        db_session.add(
+            WatchlistEntry(alpaca_asset_id=asset_id, symbol=symbol, name=symbol, exchange="NASDAQ")
+        )
+    # More unrelated recent stories than the endpoint's default page size.
+    for number in range(105):
+        db_session.add(
+            NewsStory(
+                id=1000 + number,
+                headline="Other company",
+                status="ready",
+                released_at=when + timedelta(minutes=number),
+                first_seen_at=when,
+                updated_at=when,
+            )
+        )
+        db_session.flush()
+        db_session.add(NewsStoryStock(story_id=1000 + number, alpaca_asset_id="asset-other"))
+    for number, status, published in [(1, "ready", when), (2, "pending", None), (3, "resolving", when)]:
+        db_session.add(
+            NewsStory(
+                id=number,
+                headline="A stock-linked development",
+                status=status,
+                released_at=published,
+                first_seen_at=when,
+                updated_at=when,
+            )
+        )
+        db_session.flush()
+        db_session.add(NewsStoryStock(story_id=number, alpaca_asset_id="asset-sandisk"))
+    db_session.add(NewsStoryStock(story_id=1, alpaca_asset_id="asset-other"))
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {settings.dashboard_api_key}"}
+    first = client.get("/api/news?assetId=asset-sandisk&limit=1", headers=headers)
+    second = client.get("/api/news?assetId=asset-sandisk&limit=1&offset=1", headers=headers)
+    assert [story["id"] for story in first.json()] == [1]
+    assert first.json()[0]["watchlistSymbols"] == ["MU", "SNDK"]
+    assert [story["id"] for story in second.json()] == [2]
+    assert second.json()[0]["releasedAt"] is None
+    assert client.get("/api/news?assetId=missing", headers=headers).status_code == 404
+    assert client.get("/api/news?assetId=asset-sandisk").status_code == 401
+
+
 def test_news_and_events_status_use_separate_collection_times(client, db_session):
     db_session.add_all(
         [
@@ -228,6 +276,9 @@ def test_news_status_explains_pending_summary_retry(client, db_session):
             "headline": "Acme wins contract",
             "reason": "AI response did not complete",
             "nextRetryAt": "2026-09-27T16:00:00Z",
+            "queueStatus": "waiting",
+            "attempts": 0,
+            "sources": [],
         }
     ]
     assert result.json()["failedSources"] == []
@@ -248,3 +299,78 @@ def test_manual_news_refresh_only_runs_news_job(client, monkeypatch):
     assert result.json()["refreshedSources"] == 1
     assert result.json()["refreshedStories"] == 0
     assert calls == [True]
+
+
+def test_news_queue_counts_are_disjoint_and_expose_review_evidence(client, db_session):
+    now = datetime(2026, 10, 6, tzinfo=timezone.utc)
+    for sid, status, kind, outcome in [
+        (51, "pending", None, None),
+        (52, "resolving", "validation", "failure"),
+        (53, "resolving", "temporary", "failure"),
+        (54, "resolving", "ambiguous", "needs_review"),
+    ]:
+        db_session.add(
+            NewsStory(
+                id=sid,
+                headline=f"Evidence {sid}",
+                short_summary="",
+                detail_summary="",
+                relevance_reason="",
+                key_facts=[],
+                unknowns=[],
+                category="deal",
+                direction="unclear",
+                status=status,
+                first_seen_at=now,
+                updated_at=now,
+            )
+        )
+        if kind:
+            db_session.add(
+                NewsSyncState(
+                    source_key=f"analysis:{sid}",
+                    failure_kind=kind,
+                    failure_count=3,
+                    last_outcome=outcome,
+                    last_error="Additional evidence required",
+                )
+            )
+    db_session.commit()
+    data = client.get(
+        "/api/news/status", headers={"Authorization": f"Bearer {settings.dashboard_api_key}"}
+    ).json()
+    assert data["pendingSummaries"] == 4
+    assert [
+        data[k] for k in ["waitingSummaries", "rejectedSummaries", "checkingDevelopments", "needsReview"]
+    ] == [1, 1, 1, 1]
+    assert data["pendingSummaryIssues"][-1]["queueStatus"] == "review"
+    assert data["pendingSummaryIssues"][-1]["nextRetryAt"] is None
+
+
+def test_refresh_reports_analysis_separately_from_source_failures(client, db_session, monkeypatch):
+    from app.routers import news as news_router
+
+    monkeypatch.setattr(settings, "news_enabled", True)
+
+    def refresh(*, force):
+        db_session.add(
+            NewsSyncState(
+                source_key="analysis:42",
+                last_attempt_at=datetime.now(timezone.utc),
+                last_error="Coverage comparison needs evidence",
+            )
+        )
+        db_session.commit()
+        return {"sec": 0, "pending_retried": 16, "analysis_resolved": 5, "analysis_remaining": 11}
+
+    monkeypatch.setattr(news_router, "run_news_job", refresh)
+    data = client.post(
+        "/api/news/refresh", headers={"Authorization": f"Bearer {settings.dashboard_api_key}"}
+    ).json()
+    assert data["refreshedSources"] == 1
+    assert data["failedSources"] == []
+    assert [data[key] for key in ["analysisAttempted", "analysisResolved", "analysisRemaining"]] == [
+        16,
+        5,
+        11,
+    ]

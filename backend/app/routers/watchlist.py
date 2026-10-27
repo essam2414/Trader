@@ -24,12 +24,14 @@ from ..dependencies import (
     get_alpaca_market_data_client,
     get_chart_data_source,
     get_db,
+    get_stock_analysis,
     get_trading212_client,
 )
 from ..models import WatchlistEntry
 from ..scheduler import run_events_job, run_news_job
 from ..schemas import (
     SparklinePoint,
+    StockAnalysisOut,
     StockChartBarOut,
     StockChartOut,
     TrendRankOut,
@@ -43,6 +45,7 @@ from ..schemas import (
     WatchlistSearchResult,
 )
 from ..services.chart_data import CHART_ADJUSTMENT, CHART_RANGES, ChartDataSource, session_for
+from ..services.stock_analysis_data import StockAnalysisService, read_snapshot
 from ..services.trend_ranking import TREND_CHART_RANGE, calculate_trend, trend_sort_key
 from ..services.trends_preferences import load_preferences, save_preferences
 from ..services.watchlist import (
@@ -552,6 +555,26 @@ def rank_watchlist_trends(
     return [item[2] for item in ranked]
 
 
+@router.get("/watchlist/{asset_id}/analysis", response_model=StockAnalysisOut)
+def get_stock_analysis_snapshot(
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    analysis: StockAnalysisService | None = Depends(get_stock_analysis),
+) -> StockAnalysisOut:
+    entry = db.query(WatchlistEntry).filter_by(alpaca_asset_id=asset_id).one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Watchlist entry not found")
+    now = datetime.now(timezone.utc)
+    result = read_snapshot(db, entry, now)
+    if analysis is None:
+        result.status = "stale" if result.metrics else "unavailable"
+        result.message = "Configure Alpaca market data to calculate stock analysis."
+    elif result.nextRefreshAt is None or result.nextRefreshAt <= now:
+        background_tasks.add_task(analysis.refresh_asset, asset_id)
+    return result
+
+
 @router.get("/watchlist/{asset_id}/chart", response_model=StockChartOut)
 def get_stock_chart(
     asset_id: str,
@@ -644,6 +667,7 @@ def add_watchlist_entry(
     client: AlpacaMarketDataClient | None = Depends(get_alpaca_market_data_client),
     stream: AlpacaTradeStream | None = Depends(get_alpaca_iex_trade_stream),
     delayed_sip_stream: AlpacaTradeStream | None = Depends(get_alpaca_delayed_sip_trade_stream),
+    analysis: StockAnalysisService | None = Depends(get_stock_analysis),
 ) -> WatchlistEntryOut:
     market_data = require_alpaca(client)
     try:
@@ -653,6 +677,8 @@ def add_watchlist_entry(
     except LookupError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     sync_stream_symbols(db, stream, delayed_sip_stream)
+    if analysis is not None:
+        background_tasks.add_task(analysis.refresh_asset, entry.alpaca_asset_id)
     if settings.news_enabled:
         background_tasks.add_task(run_news_job)
         background_tasks.add_task(run_events_job)

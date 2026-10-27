@@ -1,0 +1,234 @@
+{
+  "at": "2026-10-04T17:42:18.970406+00:00",
+  "reference": "TA-Lib 0.6.8",
+  "stocks": [
+    {
+      "symbol": "AAOI",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 1.2789769243681803e-13,
+      "conditions": {
+        "ema20": "neutral",
+        "sma50": "neutral",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "supportive",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "AMD",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 4.973799150320701e-14,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "supportive",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "BE",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 1.7053025658242404e-13,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "COHR",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 5.115907697472721e-13,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "CRDO",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 1.1368683772161603e-13,
+      "conditions": {
+        "ema20": "neutral",
+        "sma50": "neutral",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "FPS",
+      "sessions": 166,
+      "readings_checked": 13,
+      "max_absolute_difference": 4.973799150320701e-14,
+      "conditions": {
+        "ema20": "neutral",
+        "sma50": "neutral",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "MRVL",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 1.1368683772161603e-13,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "supportive",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "MU",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 6.821210263296962e-13,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "caution",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "NOW",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 2.4868995751603507e-14,
+      "conditions": {
+        "ema20": "neutral",
+        "sma50": "neutral",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "caution",
+        "rs20": "caution",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "SNDK",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 2.2737367544323206e-13,
+      "conditions": {
+        "ema20": "supportive",
+        "sma50": "supportive",
+        "rsi14": "supportive",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "caution",
+        "rs20": "supportive",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "VRT",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 1.1368683772161603e-13,
+      "conditions": {
+        "ema20": "neutral",
+        "sma50": "neutral",
+        "rsi14": "neutral",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "caution",
+        "rs20": "caution",
+        "rvol20": "neutral",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    },
+    {
+      "symbol": "WDC",
+      "sessions": 250,
+      "readings_checked": 13,
+      "max_absolute_difference": 3.979039320256561e-13,
+      "conditions": {
+        "ema20": "caution",
+        "sma50": "caution",
+        "rsi14": "caution",
+        "atr14": "neutral",
+        "adx14": "neutral",
+        "rs5": "caution",
+        "rs20": "caution",
+        "rvol20": "caution",
+        "extension": "neutral",
+        "range_high": "neutral",
+        "range_low": "neutral"
+      }
+    }
+  ]
+}

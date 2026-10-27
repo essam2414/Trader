@@ -237,6 +237,64 @@ def test_unavailable_novelty_check_never_publishes_a_possible_duplicate(db_sessi
     assert db_session.query(NewsStory).filter_by(status="resolving").count() == 1
 
 
+def test_completed_comparison_batches_survive_retry_and_invalidate_on_evidence_change(db_session):
+    from app.models import NewsStoryStock
+    from app.services.news_resolution import check_publication
+
+    entry = stock(db_session, "MU", "Micron")
+    for index in range(14):
+        row = NewsStory(
+            headline=f"Micron event {index}",
+            short_summary="",
+            detail_summary="",
+            relevance_reason="",
+            key_facts=[],
+            unknowns=[],
+            category="deal",
+            direction="unclear",
+            status="ready" if index < 13 else "resolving",
+            first_seen_at=NOW,
+            updated_at=NOW,
+        )
+        db_session.add(row)
+        db_session.flush()
+        db_session.add(NewsStoryStock(story_id=row.id, alpaca_asset_id=entry.alpaca_asset_id))
+        source = NewsSourceItem(
+            provider="publisher",
+            source_key=str(index),
+            url=f"https://example.com/{index}",
+            title=row.headline,
+            excerpt="Source evidence",
+            content_hash=str(index),
+            first_seen_at=NOW,
+        )
+        db_session.add(source)
+        db_session.flush()
+        db_session.add(NewsStorySource(story_id=row.id, source_item_id=source.id))
+    db_session.commit()
+    candidate = row
+
+    class PartialAnalyser(ComparingAnalyser):
+        def compare_developments(self, incoming, history):
+            if len(history) == 1:
+                self.batches.append(history)
+                self.last_failure_kind = "temporary"
+                self.last_failure_reason = "Coverage comparison timed out"
+                return None
+            return super().compare_developments(incoming, history)
+
+    analyser = PartialAnalyser("new")
+    assert not check_publication(db_session, candidate, analyser, NOW)
+    assert [len(batch) for batch in analyser.batches] == [12, 1]
+    assert not check_publication(db_session, candidate, analyser, NOW)
+    assert [len(batch) for batch in analyser.batches] == [12, 1, 1]
+    first = db_session.query(NewsStory).order_by(NewsStory.id).first()
+    first.headline = "Changed earlier evidence context"
+    db_session.commit()
+    assert not check_publication(db_session, candidate, analyser, NOW)
+    assert [len(batch) for batch in analyser.batches] == [12, 1, 1, 12, 1]
+
+
 def test_repair_is_idempotent_and_preview_is_read_only(db_session):
     entry = stock(db_session)
     # Simulate legacy rows by collecting independently and removing each identity during setup.

@@ -29,6 +29,7 @@ from .news_dates import better_release_date as _better_release_date
 from .news_identity import same_analyst_event
 from .news_resolution import (
     COVERED,
+    analysis_input_hash,
     check_publication,
     compatible,
     describe,
@@ -334,8 +335,9 @@ def _analyse_story(
         story.status = "irrelevant"
         return
     if not check_publication(db, story, analyser, now):
-        if story.status == "resolving":
-            analyser.last_failure_reason = "Checking for new facts; duplicate comparison is incomplete"
+        if story.status == "resolving" and not getattr(analyser, "last_failure_reason", None):
+            analyser.last_failure_kind = "temporary"
+            analyser.last_failure_reason = "Coverage comparison did not complete"
         return
     story.headline = result.headline
     story.short_summary = result.shortSummary
@@ -494,19 +496,42 @@ def retry_pending(
             continue
         state_key = f"analysis:{story.id}"
         state = db.get(NewsSyncState, state_key)
-        if not force and state and state.next_attempt_at and now < _utc(state.next_attempt_at):
-            continue
+        input_hash = analysis_input_hash(db, story, analyser.model)
+        input_hash = hashlib.sha256((input_hash + settings.news_exposures_json).encode()).hexdigest()
+        changed = state is not None and state.analysis_input_hash != input_hash
+        if not force and state and not changed:
+            if state.last_outcome == "needs_review":
+                continue
+            if state.next_attempt_at and now < _utc(state.next_attempt_at):
+                continue
+        previous_count = (state.failure_count or 0) if state and not changed else 0
+        previous_kind = state.failure_kind if state and not changed else None
         _analyse_story(db, story, entries, analyser, now)
         if story.status in {"pending", "resolving"} or story.summary_dirty:
             if state is None:
                 state = NewsSyncState(source_key=state_key)
                 db.add(state)
             state.last_attempt_at = now
+            kind = getattr(analyser, "last_failure_kind", None) or "temporary"
+            state.failure_kind = kind
+            state.failure_count = previous_count + 1 if previous_kind == kind else 1
+            state.analysis_input_hash = input_hash
             state.last_error = (
                 getattr(analyser, "last_failure_reason", None) or "Summary analysis did not complete"
+            )[:500]
+            held = kind == "configuration" or (
+                kind in {"validation", "comparison_validation", "ambiguous"} and state.failure_count >= 3
             )
-            state.last_outcome = "failure"
-            state.next_attempt_at = now + timedelta(minutes=30)
+            state.last_outcome = "needs_review" if held else "failure"
+            delay = min(60, 5 * 2 ** min(state.failure_count - 1, 4)) if kind == "temporary" else 30
+            state.next_attempt_at = None if held else now + timedelta(minutes=delay)
+            if kind == "budget":
+                state.next_attempt_at = (now + timedelta(days=1)).replace(
+                    hour=0, minute=0, second=10, microsecond=0
+                )
+            retry_after = getattr(analyser, "_retry_after", None)
+            if not held and retry_after and retry_after > _utc(state.next_attempt_at):
+                state.next_attempt_at = retry_after
         elif state is not None:
             db.delete(state)
         # The next token reservation writes through a separate session. Release this story's
@@ -701,8 +726,24 @@ def run_news_sync(
         budget = [
             pending_count if not isinstance(analyser, OpenAINewsAnalyser) or analyser.available() else 0
         ]
+        pending_before = {
+            sid
+            for (sid,) in db.query(NewsStory.id).filter(
+                NewsStory.status.in_(("pending", "resolving"))
+                | ((NewsStory.status == "ready") & NewsStory.summary_dirty)
+            )
+        }
         results["pending_retried"] = retry_pending(db, entries, analyser, now, budget, force=force)
         reconcile_developments(db, now, apply=True)
+        pending_after = {
+            sid
+            for (sid,) in db.query(NewsStory.id).filter(
+                NewsStory.status.in_(("pending", "resolving"))
+                | ((NewsStory.status == "ready") & NewsStory.summary_dirty)
+            )
+        }
+        results["analysis_resolved"] = len(pending_before - pending_after)
+        results["analysis_remaining"] = len(pending_after)
         new_source_count = db.query(NewsSourceItem).filter(NewsSourceItem.first_seen_at == now).count()
         ready_after_ids = {story_id for (story_id,) in db.query(NewsStory.id).filter_by(status="ready")}
         new_card_count = len(ready_after_ids - ready_before_ids)
@@ -710,8 +751,8 @@ def run_news_sync(
             NewsCollectionRun(
                 started_at=now,
                 completed_at=datetime.now(timezone.utc),
-                attempted_count=len(results) - 1 + len(failed),
-                success_count=len(results) - 1,
+                attempted_count=len(results) - 3 + len(failed),
+                success_count=len(results) - 3,
                 failure_count=len(failed),
                 skipped_count=len(skipped),
                 new_source_count=new_source_count,

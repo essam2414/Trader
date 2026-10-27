@@ -69,6 +69,34 @@ function stubBriefing(news: CatalystCard[] = [card], events = [event], failedEve
 describe("NewsSection", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("separates blocked work and keeps held source evidence accessible", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/news/status") return response({
+        lastSuccessfulRunAt: null, failedSources: [], sourceErrors: [], pendingSummaries: 16,
+        waitingSummaries: 1, rejectedSummaries: 6, checkingDevelopments: 8, needsReview: 1,
+        unresolvedDevelopments: 15, pendingSummaryIssues: [{
+          storyId: 42, headline: "Held earnings outlook", reason: "Quarter is missing from evidence",
+          nextRetryAt: null, queueStatus: "review", attempts: 3,
+          sources: [{ title: "Read the original evidence", url: "https://example.com/evidence", provider: "company" }],
+        }],
+      });
+      if (path === "/api/events/status") return response({ lastSuccessfulRunAt: null, sourceErrors: [] });
+      return response([]);
+    }));
+    render(<NewsSection />);
+    expect(await screen.findByText("16 stories awaiting analysis.")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for summaries: 1")).toBeInTheDocument();
+    expect(screen.getByText("Rejected summaries: 6")).toBeInTheDocument();
+    expect(screen.getByText("Checking earlier coverage: 8")).toBeInTheDocument();
+    expect(screen.getByText("Needs review: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("See analysis details"));
+    expect(screen.getByRole("link", { name: "Read the original evidence" })).toHaveAttribute(
+      "href", "https://example.com/evidence",
+    );
+    expect(screen.getByText(/Quarter is missing from evidence/)).toHaveTextContent("Needs review");
+    expect(screen.queryByText(/Next retry/)).not.toBeInTheDocument();
+  });
+
   it("explains why possible duplicates are waiting outside the feed", async () => {
     vi.stubGlobal("fetch", vi.fn(async (path: string) => {
       if (path === "/api/news/status") return response({
@@ -79,7 +107,7 @@ describe("NewsSection", () => {
       return response([]);
     }));
     render(<NewsSection />);
-    expect(await screen.findByText(/2 possible developments are being checked against earlier coverage/)).toBeInTheDocument();
+    expect(await screen.findByText(/Checking earlier coverage: 2/)).toBeInTheDocument();
   });
 
   it("colors upside and downside news cards while leaving unclear cards neutral", async () => {
@@ -235,8 +263,10 @@ describe("NewsSection", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh events" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("tab", { name: "News" }));
     expect(screen.getByRole("button", { name: "Refresh news" })).toBeDisabled();
-    finishNews(response({ refreshedSources: 1, refreshedStories: 1, failedSources: [] }));
+    finishNews(response({ refreshedSources: 1, refreshedStories: 1, failedSources: [],
+      analysisAttempted: 8, analysisResolved: 3, analysisRemaining: 5 }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh news" })).not.toBeDisabled());
+    expect(screen.getByText(/Analysis: 8 attempted, 3 resolved, 5 still awaiting analysis/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/events", { method: "POST", cache: "no-store" });
     expect(fetchMock).toHaveBeenCalledWith("/api/news", { method: "POST", cache: "no-store" });
   });
@@ -403,8 +433,8 @@ describe("NewsSection", () => {
     try {
       render(<NewsSection />);
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(screen.getByText(/1 source-backed story has a summary pending/)).toBeInTheDocument();
-      fireEvent.click(screen.getByText("See retry status"));
+      expect(screen.getByText(/1 story awaiting analysis/)).toBeInTheDocument();
+      fireEvent.click(screen.getByText("See analysis details"));
       expect(screen.getByText(/AI response did not complete/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Acme wins supply agreement/i }));
       await act(async () => { await Promise.resolve(); });
@@ -412,7 +442,7 @@ describe("NewsSection", () => {
 
       completed = true;
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-      expect(screen.queryByText(/source-backed story has a summary pending/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/story awaiting analysis/)).not.toBeInTheDocument();
       expect(screen.getByText("New AI summary")).toBeInTheDocument();
       expect(within(screen.getByRole("dialog")).getByText("New AI detail")).toBeInTheDocument();
       expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
