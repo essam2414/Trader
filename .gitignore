@@ -3,14 +3,23 @@ __pycache__/
 *.pyc
 .venv/
 *.db
+*.sqlite
+*.sqlite3
+
+# Local databases, logs, screenshots, and analysis artifacts
+output/
 
 # Node
 node_modules/
 .next/
 
-# Env files
-.env
-.env.local
+# Env files (keep example templates versioned)
+.env*
+!.env.example
+!.env.local.example
+
+# Generated TypeScript build metadata
+frontend/tsconfig.tsbuildinfo
 
 # OS
 .DS_Store

@@ -53,14 +53,14 @@ In the Trading 212 app or website, open **Settings → API (Beta)**, accept the 
 
 ### 2. Create a local PostgreSQL database
 
-Start PostgreSQL, then use `psql` (or another PostgreSQL client) to create a local role and database. For example, connect as a PostgreSQL administrator and run:
+Start PostgreSQL, then use `psql` (or another PostgreSQL client) to create a local role and a new, empty database for this installation. For example, connect as a PostgreSQL administrator and run:
 
 ```sql
 CREATE USER trader WITH PASSWORD 'choose-a-local-password';
 CREATE DATABASE trader OWNER trader;
 ```
 
-Use that password in the backend `DATABASE_URL` below. PostgreSQL must be running whenever you use Trader.
+Use that password in the backend `DATABASE_URL` below. PostgreSQL must be running whenever you use Trader. The database is created on the user’s own computer and is not downloaded from or stored in this GitHub repository. Each user should create a separate empty database and connect their own Trading 212 account; this repository does not include my local database or account history.
 
 ### 3. Configure and start the backend
 
