@@ -4,7 +4,7 @@
 
 Trader is a local, read-only swing-trading decision-support dashboard for a Trading 212 Invest or Stocks ISA account. It brings current holdings together with portfolio history, trade and dividend analytics, a watchlist, market charts, and source-linked company news and events. It is for analysis and learning; it does not place, modify, or cancel trades.
 
-This repository is public, but the application is designed for one user on a trusted local machine. It is not a hosted multi-user service. Do not publish API keys, account data, database files, or environment files. Keep the app bound to localhost and do not expose it to the internet as-is.
+The application is designed for one user on a trusted local machine. It is not a hosted multi-user service. Do not publish API keys, account data, database files, or environment files. Keep the app bound to localhost and do not expose it to the internet as-is.
 
 ## What it does
 
@@ -12,28 +12,88 @@ This repository is public, but the application is designed for one user on a tru
 - Periodically stores portfolio snapshots and imports order-fill and dividend history into the local database. The history importer is resumable and works through paginated batches.
 - Calculates trade performance, realised P&L, dividends, drawdown, and related statistics from imported history.
 - Provides a watchlist with market charts and descriptive stock analysis. Alpaca credentials enable these market-data features.
-- Collects source-linked watchlist news and event dates in scheduled background jobs. Optional providers can add AI summaries and extra news/calendar coverage.
+- Builds a source-backed watchlist catalyst briefing with story grouping, novelty checks, and evidence-validated AI summaries. OpenAI analysis and web-search discovery are opt-in.
 - Protects the dashboard with a local PIN login and protects backend API routes with a shared secret between the frontend server and backend.
 
 ## How data moves through the app
 
-```text
-Trading 212 API ── live account/positions ──┐
-Trading 212 API ── fills/dividends ─────────┤
-Alpaca / public news sources ───────────────┤
-                                             v
-                                    FastAPI backend
-                             sync jobs, calculations, API
-                                             |
-                                             v
-                                 Local PostgreSQL database
-                                             ^
-                                             |
-Browser ── Next.js UI and server routes ────┘
-                  (server adds backend bearer key)
+Trader is split into a browser-facing Next.js application, a Python API and background worker, and a local PostgreSQL database. The browser never connects directly to PostgreSQL or to the provider APIs that require server credentials.
+
+```mermaid
+flowchart LR
+  Browser[Browser]
+  subgraph Frontend[Next.js frontend]
+    Pages[App Router pages and UI components]
+    Routes[Server route handlers]
+    Session[PIN session cookie]
+    Pages --> Routes
+    Browser --> Pages
+    Browser -->|PIN login and session cookie| Session
+    Session -->|Gates navigation| Pages
+  end
+  subgraph Backend[FastAPI backend]
+    Routers[Authenticated API routers]
+    Services[Portfolio, watchlist, market, news and event services]
+    Scheduler[APScheduler background jobs]
+    Routers --> Services
+    Scheduler --> Services
+  end
+  DB[(Local PostgreSQL)]
+  T212[Trading 212 API]
+  Alpaca[Alpaca market data]
+  Sources[News, filings and event sources]
+  OpenAI[Optional OpenAI Responses API]
+  Routes -->|Server-side request with bearer key| Routers
+  Services <--> DB
+  T212 -->|Read-only account and history data| Services
+  Alpaca --> Services
+  Services <-->|Read and public-source data| Sources
+  Services <-->|Opt-in public-source analysis and discovery| OpenAI
 ```
 
-The browser talks to the Next.js app. Next.js server-side routes call the FastAPI backend and attach `DASHBOARD_API_KEY`; that secret and all provider credentials remain server-side. The backend reads Trading 212 data and stores history and snapshots in PostgreSQL. Current account and positions are fetched live when requested, while historical analytics use data already imported into the database. No order-placement flow is implemented.
+### Code layers
+
+| Area | Responsibility |
+| --- | --- |
+| `frontend/app/` | App Router pages and server-side API route handlers that forward browser requests to FastAPI |
+| `frontend/components/` | Dashboard, positions, history, watchlist, charts, trends, and news/event UI |
+| `frontend/lib/` | Backend request helpers, session handling, shared UI types, and watchlist route helpers |
+| `backend/app/routers/` | HTTP endpoints for portfolio, watchlist, news/events, and market-session data |
+| `backend/app/services/` | Portfolio metrics, history sync, watchlist and chart data, stock analysis, news collection/analysis, and event calendars |
+| `backend/app/models.py` and `schemas.py` | PostgreSQL persistence models and validated API response shapes |
+| `backend/app/scheduler.py` and `main.py` | Backend startup wiring and periodic/background jobs |
+| `backend/alembic/` | Database schema migrations |
+| `backend/tests/` and `frontend/**/__tests__/` | Backend and frontend regression coverage |
+
+The frontend proxy checks a signed, expiring session cookie created after PIN login. Server-side Next.js code forwards API requests to FastAPI and adds `DASHBOARD_API_KEY` as a bearer token. FastAPI checks that token before serving protected routes. Trading 212, Alpaca, Finnhub, OpenAI, and database credentials are loaded by the backend from its local environment; they are not sent to browser JavaScript. The PIN is currently fixed in the code, so it is only a convenience gate for a trusted local install.
+
+### Portfolio, history, and market data
+
+The dashboard fetches the account summary and open positions live from Trading 212. A short-lived backend cache reduces duplicate requests while the dashboard loads. APScheduler periodically stores portfolio value snapshots and imports order fills and dividends in resumable, paginated batches. The metrics service derives closed-trade performance, realised P&L, dividend income, drawdown, and related history views from the local records; it does not submit orders.
+
+Watchlist entries are stored locally. When Alpaca credentials are configured, the backend uses Alpaca market data for stock analysis and charts, persists historical price bars and corporate actions, and maintains market-data streams for watchlist symbols. The frontend requests charts and descriptive analysis through Next.js server routes. Watchlist ordering and trend preferences are stored in PostgreSQL as well.
+
+### Source-backed AI news pipeline
+
+News is a central feature with a source collection and evidence-checking pipeline. Collection is scheduled for **08:55 and 20:30 America/New_York**. The backend also checks for missed runs after startup, retries pending summaries every five minutes, and persists source/run status so failures and queued work can be inspected.
+
+1. **Collect candidate sources.** Adapters read Alpaca company news, SEC filings, S&P Global index announcements, default public RSS feeds, and any configured company investor-relations feeds. Finnhub is an optional extra source. OpenAI web search can optionally discover additional publisher URLs; it is off unless both OpenAI news and web search are explicitly enabled.
+2. **Normalize and preserve provenance.** Each item is normalized to a canonical URL, provider/source identifier, headline, bounded excerpt, candidate symbols, publication date and date precision. Source identity and a content hash make ingestion idempotent. A revised article is retained as a new evidence revision rather than silently overwriting what an earlier analysis used.
+3. **Filter and match to the watchlist.** The collector drops malformed items and items without a likely catalyst, then matches ticker/company references to the local watchlist. Indirect industry or geopolitical coverage is accepted only when a ticker has an explicit, configured exposure tag. Source items are saved with their original links and linked to one or more candidate stories and stocks.
+4. **Group developments and check novelty.** Stable event descriptors and publication dates help distinguish new developments from multiple articles about the same event. Candidates with ambiguous identity are held for comparison against previously covered stories. If evidence describes additional coverage of an existing development, its sources are merged into the existing card while the decision and provenance remain stored; it does not create a duplicate card. Unresolved comparisons stay queued for a later retry or review.
+5. **Generate one structured analysis per story.** When `OPENAI_API_KEY` is present and `OPENAI_NEWS_ENABLED=true`, the backend sends the selected watchlist identifiers and public source titles/excerpts for that story to the OpenAI Responses API. The model is asked for a headline, short and detailed summaries, relevance explanation, key facts, unknowns, category, direction, affected watchlist assets, and supporting source IDs. Source excerpts are treated as untrusted input. Trading 212 credentials, holdings, balances, and trade history are not sent to OpenAI.
+6. **Validate before publication.** The response must match a strict schema. The backend verifies every referenced asset and source ID against the supplied watchlist and evidence, and checks that generated numbers appear in supporting source text. Responses that parse but fail provenance checks get one evidence-bounded correction attempt. Candidates with ambiguous identity also pass a historical coverage/novelty check before publication; unrelated items are discarded. Unsupported, ambiguous, or unavailable analyses are held rather than published as complete summaries.
+7. **Persist, retry, and display.** PostgreSQL stores the raw source items, story cards, stock/source links, event identity and resolution decisions, comparison cache, sync status, collection runs, and daily AI usage. Pending candidates retain their source evidence while the status API reports their queue state and retry details; unresolved or held candidates are not shown as ready cards. Temporary failures receive a retry time, while repeated validation/ambiguity problems can be marked for review. The Next.js news UI calls authenticated FastAPI endpoints to show cards, source links, refresh/status information, and pending-analysis issues. The same cards can be filtered by watchlist stock in its detail pane.
+
+AI summaries and optional OpenAI web discovery share a persistent UTC-day token budget, set to **2,400,000 tokens by default** and capped at 2,500,000 by the application. The backend reserves a conservative estimate before a request and settles it using reported usage afterward; unknown usage after a timeout is charged at the full reservation. OpenAI analysis is optional and may incur API charges. Without it, source headlines and links can still be collected and shown, with summaries marked pending.
+
+### Event calendar pipeline
+
+Upcoming events are collected separately from the AI news-card pipeline. A daily job reads public Fed, BLS, BEA, and EIA schedules, earnings-calendar data when configured, optional company investor-relations calendars, and relevant index events. Events and their watchlist-stock links are upserted locally with date/source metadata. Date-only or estimated events remain identified as such; the app does not invent an earnings-call time. The sidebar and news/events panel read the persisted event records through the API.
+
+### Main data boundary
+
+PostgreSQL is the local source of truth for imported history, snapshots, watchlist configuration, cached market history, and collected news/events. Current account/position values are fetched live; historical metrics and briefing cards are derived from local persisted records. The app has no order-placement flow and never writes trades to Trading 212.
 
 ## Tech stack
 
